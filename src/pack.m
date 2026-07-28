@@ -222,15 +222,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalMaxPairs = N*12;
 
     fprintf('Starting main integration loop (max %d steps)...\n', scalMaxSteps);
-    scalNextLogFrac = 0.01;  % next threshold to print
+    scalLogInterval = round(0.05 * scalMaxSteps);  % 5% of max steps
     for nt = 1:scalMaxSteps
 
         % Progress logging
-        fracDone = nt / scalMaxSteps;
-        if fracDone >= scalNextLogFrac
-            fprintf('  %d%% complete | step %d | P=%.4e | Ek=%.4e\n', ...
-                round(scalNextLogFrac*100), nt, scalPressure, scalEk);
-            scalNextLogFrac = scalNextLogFrac + 0.1;
+        if mod(nt, 5000) == 0
+            fprintf('  step %d | P=%.4e | P_target=%.4e | P/P_target=%.4f\n', ...
+                nt, scalPressure, P_target, scalPressure/P_target);
         end
         boolConverged = false;
 
@@ -261,6 +259,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         vecPosX = vecPosX + vecVelX*scalTimestep + vecAccelXPrev.*(scalTimestep^2/2);
         vecPosY = vecPosY + vecVelY*scalTimestep + vecAccelYPrev.*(scalTimestep^2/2);
+        if boolThreeD
+            vecPosZ = vecPosZ + vecVelZ*scalTimestep + vecAccelZPrev.*(scalTimestep^2/2);
+        end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%% Re-assign particles to cells %%%%%%%%%
@@ -397,6 +398,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecForceZ = vecForceZ - scalDissipationAbsolute .* vecVelZ;
         end
 
+        % TODO: get rid of these since this is isotropic
         boolLeftWallContact  = vecPosX < vecDiameter/2;
         boolRightWallContact = vecPosX > scalBoxWidth - vecDiameter/2;
 
@@ -424,7 +426,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecVelX = vecVelX + (vecAccelXPrev + vecAccelX) .* (scalTimestep/2);  % [N x 1]
         vecVelY = vecVelY + (vecAccelYPrev + vecAccelY) .* (scalTimestep/2);  % [N x 1]
         if boolThreeD
-            vecPosZ = vecPosZ + vecVelZ*scalTimestep + vecAccelZPrev.*(scalTimestep^2/2);
+                vecVelZ = vecVelZ + (vecAccelZPrev + vecAccelZ) .* (scalTimestep/2);  % ← correct
         end
 
         % Zero out rattlers (no contacts)
@@ -540,7 +542,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     fprintf('Packing fraction before cleanRats: %.4f\n', scalVolumeSpheres/scalVolumeBox);
 
     fprintf('Running cleanRats...\n');
-    fprintf('Box dims: Lx=%.4f, Ly=%.4f, Lz=%.4f\n', scalBoxWidth, scalBoxHeight, scalBoxDepth);
+    if boolThreeD
+        fprintf('Box dims: Lx=%.4f, Ly=%.4f, Lz=%.4f\n', scalBoxWidth, scalBoxHeight, scalBoxDepth);
+    else
+        fprintf('Box dims: Lx=%.4f, Ly=%.4f\n', scalBoxWidth, scalBoxHeight);
+    end
     fprintf('Radii range: min=%.4f, max=%.4f\n', min(vecDiameter/2), max(vecDiameter/2));
     % TODO: need to decide logic if I want to use PBC or not
     % for now, I'll assume fully periodic since weh're mostly done with DEM
@@ -643,6 +649,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
     drawnow;
     hold off;
+
 %% Save results
 
     if boolThreeD
@@ -655,13 +662,28 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             save_path, N, num2str(P_target), scalRoundedWidth, seed);
     end
 
+    N_original = N;
+    N_clean = size(matPositions, 1);
+    N = N_clean;
+
+    % Compute packing fraction after cleanRats
+    if boolThreeD
+        scalVolumeSpheres_clean = sum((4/3) * pi * (vecDiameter/2).^3);
+        scalVolumeBox_clean = scalBoxWidth * scalBoxHeight * scalBoxDepth;
+    else
+        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
+        scalVolumeBox_clean = scalBoxWidth * scalBoxHeight;
+    end
+    packingFraction = scalVolumeSpheres_clean / scalVolumeBox_clean;
+    fprintf('Packing fraction after cleanRats: %.4f\n', packingFraction);
+
     if calc_eig
         if boolThreeD
             % 3D hessian not yet implemented — skip eigenmodes
             warning('calc_eig not supported for 3D yet — saving positions only.');
             save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                 'scalBoxWidth', 'scalBoxHeight', 'scalBoxDepth', ...
-                'K', 'P_target', 'scalPressure', 'N');
+                'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
         else
             matPositions = [vecPosX, vecPosY];
             vecRadii = vecDiameter ./ 2;
@@ -669,17 +691,18 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeight, scalBoxWidth);
             [matEigenVectors, matEigenValues] = eig(matHessian);
             save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N', ...
-                'matEigenVectors', 'matEigenValues');
+                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
+                'packingFraction', 'matEigenVectors', 'matEigenValues');
         end
     else
         if boolThreeD
             save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                 'scalBoxWidth', 'scalBoxHeight', 'scalBoxDepth', ...
-                'K', 'P_target', 'scalPressure', 'N');
+                'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
         else
             save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
+                'packingFraction');
         end
     end
 
@@ -687,7 +710,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
     if x_mult ~= 1 || y_mult ~= 1
         if ~boolThreeD
-            packRepeatTile(N, K, P_target, scalRoundedWidth, seed, x_mult, y_mult, ...
+            packRepeatTile(N_original, K, P_target, scalRoundedWidth, seed, x_mult, y_mult, ...
                 calc_eig, save_path, save_path);
             disp("Tile saved to: " + strFilename);
         else

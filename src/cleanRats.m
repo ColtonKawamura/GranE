@@ -38,9 +38,9 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
                 dy = dy - round(dy / Ly) * Ly;
 
                 %----------------- debug
-                if i <= 3 && j <= 4
-                    fprintf('  i=%d j=%d dx=%.4f dy=%.4f\n', i, j, dx, dy);
-                end
+                % if i <= 3 && j <= 4
+                %     fprintf('  i=%d j=%d dx=%.4f dy=%.4f\n', i, j, dx, dy);
+                % end
                 %----------------- debug
 
                 if is3D
@@ -52,9 +52,9 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
                 end
 
                 %----------------- debug
-                if i <= 3 && j <= 4
-                    fprintf('  i=%d j=%d r=%.6f ri+rj=%.6f overlap=%.6e\n', i, j, r, radii(i)+radii(j), radii(i)+radii(j)-r);
-                end
+                % if i <= 3 && j <= 4
+                %     fprintf('  i=%d j=%d r=%.6f ri+rj=%.6f overlap=%.6e\n', i, j, r, radii(i)+radii(j), radii(i)+radii(j)-r);
+                % end
                 %----------------- debug
 
                 if radii(i) + radii(j) - r > -1e-3
@@ -65,8 +65,8 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
         end
 
         fprintf('[cleanRats] Zn distribution: min=%d, max=%d, mean=%.2f\n', min(Zn), max(Zn), mean(Zn));
-        fprintf('[cleanRats] Zn values: ');
-        disp(Zn');
+        % fprintf('[cleanRats] Zn values: ');
+        % disp(Zn');
         if is3D
             to_keep = Zn > 3;
         else
