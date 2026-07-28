@@ -38,6 +38,22 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % check to see if 3d path is needed
     boolThreeD = (z_mult ~= 0);
 
+    % Check if packing already exists — skip if so
+    if boolThreeD
+        scalRoundedWidth = round(N^(1/3));
+        strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
+            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    else
+        scalRoundedWidth = round(sqrt(N));
+        strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
+            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    end
+
+    if isfile(strFilename)
+        fprintf('Packing already exists, skipping: %s\n', strFilename);
+        return;
+    end
+
     tic
 
     rng(seed)
@@ -652,15 +668,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
 %% Save results
 
-    if boolThreeD
-        scalRoundedWidth = round(N^(1/3));
-        strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-            save_path, N, num2str(P_target), scalRoundedWidth, seed);
-    else
-        scalRoundedWidth = round(sqrt(N));
-        strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-            save_path, N, num2str(P_target), scalRoundedWidth, seed);
-    end
+    % if boolThreeD
+    %     scalRoundedWidth = round(N^(1/3));
+    %     strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
+    %         save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    % else
+    %     scalRoundedWidth = round(sqrt(N));
+    %     strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
+    %         save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    % end
 
     N_original = N;
     N_clean = size(matPositions, 1);
