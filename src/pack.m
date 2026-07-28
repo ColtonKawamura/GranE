@@ -472,7 +472,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxDepth = scalBoxDepth * (1-scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
                 end
-                boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure < P_target && scalEk < 1e-8
@@ -484,7 +483,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxDepth = scalBoxDepth * (1-scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
                 end
-                boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure > P_target && scalEk < 1e-10 && nt > (scalLastCompressStep+100)
@@ -496,7 +494,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxDepth = scalBoxDepth * (1+scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1+scalCompressionRateFast);
                 end
-                boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
                 boolFastCompressPhase = false;
@@ -511,7 +508,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxDepth = scalBoxDepth * (1-scalCompressionRate);
                     vecPosZ = vecPosZ * (1-scalCompressionRate);
                 end
-                boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure < P_target && scalEk < 1e-8
@@ -523,7 +519,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxDepth = scalBoxDepth * (1-scalCompressionRate);
                     vecPosZ = vecPosZ * (1-scalCompressionRate);
                 end
-                boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure > P_target && scalEk < 1e-20
@@ -535,11 +530,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     fprintf('Loop finished at step %d.\n', nt);
 
     %% Remove rattlers before saving
+    if boolThreeD
+        scalVolumeSpheres = sum((4/3)*pi*(vecDiameter/2).^3);
+        scalVolumeBox = scalBoxWidth * scalBoxHeight * scalBoxDepth;
+    else
+        scalVolumeSpheres = sum(pi*(vecDiameter/2).^2);
+        scalVolumeBox = scalBoxWidth * scalBoxHeight;
+    end
+    fprintf('Packing fraction before cleanRats: %.4f\n', scalVolumeSpheres/scalVolumeBox);
+
     fprintf('Running cleanRats...\n');
+    fprintf('Box dims: Lx=%.4f, Ly=%.4f, Lz=%.4f\n', scalBoxWidth, scalBoxHeight, scalBoxDepth);
+    fprintf('Radii range: min=%.4f, max=%.4f\n', min(vecDiameter/2), max(vecDiameter/2));
+    % TODO: need to decide logic if I want to use PBC or not
+    % for now, I'll assume fully periodic since weh're mostly done with DEM
     if boolThreeD
         matPositions = [vecPosX, vecPosY, vecPosZ];
         vecRadii = vecDiameter ./ 2;
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeight, scalBoxWidth, scalBoxDepth);
+        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeight, scalBoxWidth, scalBoxDepth, true);
         vecPosX = matPositions(:,1);
         vecPosY = matPositions(:,2);
         vecPosZ = matPositions(:,3);
@@ -553,6 +561,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     vecDiameter = vecRadii .* 2;
     N_clean = size(matPositions, 1);
     fprintf('cleanRats complete. %d particles remaining (of %d original).\n', N_clean, N);
+    if N_clean == 0
+        warning('All particles removed by cleanRats — packing did not jam. Skipping save.');
+        return;
+    end
 
     %% Final plot
     figure;
@@ -561,7 +573,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         [sx, sy, sz] = sphere(16);
 
         % Main particles
-        for np = 1:N
+        for np = 1:N_clean
             r = vecDiameter(np)/2;
             surf(r*sx + vecPosX(np), r*sy + vecPosY(np), r*sz + vecPosZ(np), ...
                 'FaceColor', 'b', 'EdgeColor', 'none', 'FaceAlpha', 0.6);
@@ -576,7 +588,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             ox = vecOffsets(iface, 1);
             oy = vecOffsets(iface, 2);
             oz = vecOffsets(iface, 3);
-            for np = 1:N
+            for np = 1:N_clean
                 r = vecDiameter(np)/2;
                 surf(r*sx + vecPosX(np) + ox, ...
                      r*sy + vecPosY(np) + oy, ...
