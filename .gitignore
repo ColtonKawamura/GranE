@@ -1,0 +1,10 @@
+*.mat
+*.fig
+*.eps
+*.png
+*.jpg
+*.txt
+*.dat
+*.csv
+*.log
+*.out
