@@ -1,4 +1,4 @@
-function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, save_path, options)
+function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, calc_eig, save_path, options)
 
     %Function to create 2D packing with following input parameters:
     % N,        Number of particles
@@ -29,18 +29,28 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         plotit   (1,1) logical = false
         x_mult   (1,1) double = 1
         y_mult   (1,1) double = 1
+        z_mult   (1,1) double = 0
         calc_eig (1,1) logical = false
         save_path (1,1) string = "./junkyard"
         options.hertzian (1,1) logical = false
     end
+
+    % check to see if 3d path is needed
+    boolThreeD = (z_mult ~= 0);
 
     tic
 
     rng(seed)
 
     %% Box and particle setup
-    scalBoxWidth  = 2*sqrt(N)*D;   % Lx
-    scalBoxHeight = 2*sqrt(N)*D;   % Ly
+    if boolThreeD
+        scalBoxWidth  = 2*N^(1/3)*D;   % Lx
+        scalBoxHeight = 2*N^(1/3)*D;   % Ly
+        scalBoxDepth  = 2*N^(1/3)*D;   % Lz
+    else
+        scalBoxWidth  = 2*sqrt(N)*D;   % Lx
+        scalBoxHeight = 2*sqrt(N)*D;   % Ly
+    end
 
     scalDissipationVelocity = 0.1;  % Bv: velocity-dependent dissipation prefactor
     scalDissipationAbsolute = 0.5;  % B:  absolute (drag) dissipation
@@ -91,24 +101,40 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
     % and the column is the y-position
     % meshgrid() is more inuitive (row is y-position,etc),
     % bu ndgrid() is faster
-    [vecPosX, vecPosY] = ndgrid(D/2 : G*D : scalBoxWidth-D/2, ...
-                                D/2 : G*D : scalBoxHeight-D/2);
+    if boolThreeD
+    [vecPosX, vecPosY, vecPosZ] = ndgrid(D/2 : G*D : scalBoxWidth-D/2, ...
+                                          D/2 : G*D : scalBoxHeight-D/2, ...
+                                          D/2 : G*D : scalBoxDepth-D/2);
+    else
+        [vecPosX, vecPosY] = ndgrid(D/2 : G*D : scalBoxWidth-D/2, ...
+                                    D/2 : G*D : scalBoxHeight-D/2);
+    end
 
     % shuffle the particles to avoid crystallization
     % shuffle the indices of the particles
     [~, vecShuffleIdx] = sort(rand(numel(vecPosX), 1));  % [numel x 1]
     vecPosX = vecPosX(vecShuffleIdx(1:N));   % [N x 1] of particle x-positions
     vecPosY = vecPosY(vecShuffleIdx(1:N));   % [N x 1] etc
+    if boolThreeD
+        vecPosZ = vecPosZ(vecShuffleIdx(1:N));
+    end
 
     % assign random initial velocities
     vecVelX = sqrt(scalTemperature) * randn(N, 1);  % [N x 1]
     vecVelX = vecVelX - mean(vecVelX);
     vecVelY = sqrt(scalTemperature) * randn(N, 1);  % [N x 1]
     vecVelY = vecVelY - mean(vecVelY);
+    if boolThreeD
+        vecVelZ = sqrt(scalTemperature) * randn(N, 1);
+        vecVelZ = vecVelZ - mean(vecVelZ);  % [N x 1]
+    end
 
     % start with zero accelerations
     vecAccelXPrev = zeros(N, 1);  % [N x 1]
     vecAccelYPrev = zeros(N, 1);  % [N x 1]
+    if boolThreeD
+        vecAccelZPrev = zeros(N, 1);  % [N x 1]
+    end
 
     vecKineticEnergyHistory   = zeros(scalMaxSteps, 1);  % [scalMaxSteps x 1]
     vecPotentialEnergyHistory = zeros(scalMaxSteps, 1);  % [scalMaxSteps x 1]
@@ -125,16 +151,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
     scalCellWidthX = scalBoxWidth  / scalNumCellsX;
     scalNumCellsY  = round(scalBoxHeight / scalRawCellWidth);
     scalCellWidthY = scalBoxHeight / scalNumCellsY;
+    if boolThreeD
+        scalNumCellsZ  = round(scalBoxDepth  / scalRawCellWidth);
+        scalCellWidthZ = scalBoxDepth  / scalNumCellsZ;
+    end
 
     % Wrap positions into [0, L) before rebuilding cell list
     % mod(x, L) == x - L*floor(x/L), handles both positive and negative overshoot
     vecPosX = mod(vecPosX, scalBoxWidth);   % [N x 1]
     vecPosY = mod(vecPosY, scalBoxHeight);  % [N x 1]
+    if boolThreeD
+        vecPosZ = mod(vecPosZ, scalBoxDepth);
+    end
 
     % Map positions to cell indices in [1, scalNumCells]
     % ceil gives 1-based index; clamp handles the x=0 edge case where ceil returns 0
-    vecCellIdxX = min(max(ceil(vecPosX / scalCellWidthX), 1), scalNumCellsX);  % [N x 1]
-    vecCellIdxY = min(max(ceil(vecPosY / scalCellWidthY), 1), scalNumCellsY);  % [N x 1]
+    % vecCellIdxX = min(max(ceil(vecPosX / scalCellWidthX), 1), scalNumCellsX);  % [N x 1]
+    % vecCellIdxY = min(max(ceil(vecPosY / scalCellWidthY), 1), scalNumCellsY);  % [N x 1]
 
     % Convert 2D cell index to linear index, then bucket particles in one pass
     % Grid (3x3 example):
@@ -145,7 +178,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
     %
     % formula: idx = x + numCellsX * (y - 1)
     % e.g. cell (2,3): 2 + 3*(3-1) = 2 + 6 = 8
-    vecCellLinearIdx = vecCellIdxX + scalNumCellsX * (vecCellIdxY - 1);  % [N x 1]
+    % vecCellLinearIdx = vecCellIdxX + scalNumCellsX * (vecCellIdxY - 1);  % [N x 1]
 
     % Particle:    1    2    3    4    5
     % Cell index:  3    1    3    2    1
@@ -155,10 +188,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
     % cell 2 -> [4]
     % cell 3 -> [1, 3]
     % accumarray groups particle indices by cell — O(N) instead of O(N * numCells)
-    cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY 1], @(x){x});
+    % cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY 1], @(x){x});
 
     % reshape just converts that flat list back into a 2D grid so you can look up neighbors naturally by (ix, iy) index.
-    cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY);  % [scalNumCellsX x scalNumCellsY]
+    % cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY);  % [scalNumCellsX x scalNumCellsY]
 
     %% Setup plotting
     if plotit
@@ -188,10 +221,20 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
     vecPairMM = zeros(N*12, 1);  % [N*12 x 1]
     scalMaxPairs = N*12;
 
+    fprintf('Starting main integration loop (max %d steps)...\n', scalMaxSteps);
+    scalNextLogFrac = 0.01;  % next threshold to print
     for nt = 1:scalMaxSteps
 
-        %% Plotting
+        % Progress logging
+        fracDone = nt / scalMaxSteps;
+        if fracDone >= scalNextLogFrac
+            fprintf('  %d%% complete | step %d | P=%.4e | Ek=%.4e\n', ...
+                round(scalNextLogFrac*100), nt, scalPressure, scalEk);
+            scalNextLogFrac = scalNextLogFrac + 0.1;
+        end
         boolConverged = false;
+
+        %% Plotting
         if plotit && mod(nt, scalPlotSkip) == 0
             if boolConverged
                 figure(1);
@@ -223,8 +266,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         %%%%% Re-assign particles to cells %%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         if boolCellUpdateNeeded || mod(nt, scalCellUpdateInterval) == 0
-            [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...
-                rebuildCellList(vecPosX, vecPosY, scalBoxWidth, scalBoxHeight, scalRawCellWidth, scalTimestep, N);
+            if boolThreeD
+                [vecPosX, vecPosY, vecPosZ, cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ] = ...
+                    rebuildCellList3D(vecPosX, vecPosY, vecPosZ, scalBoxWidth, scalBoxHeight, scalBoxDepth, scalRawCellWidth, scalTimestep, N);
+            else
+                [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...
+                    rebuildCellList(vecPosX, vecPosY, scalBoxWidth, scalBoxHeight, scalRawCellWidth, scalTimestep, N);
+            end
             boolCellUpdateNeeded = false;
         end
 
@@ -234,53 +282,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         % Collect unique pairs (idxNN < idxMM) from neighboring cells.
         % Enforcing idxNN < idxMM means each pair is visited once,
         % halving the number of force evaluations.
-        scalNumPairs = 0;
 
-        for idxCellX = 1:scalNumCellsX
-            for idxCellY = 1:scalNumCellsY
-
-                % get neighbor cell of current cell in left/right up/down directions
-                % mod(x, N) + 1 gives the 1-based index of the x-th cell
-                % +1 because mod is 0-based, but cell indices are 1-based
-                scalCellLeft = mod(idxCellX-2, scalNumCellsX)+1; % mod(-1,N)+1 = N for first cell
-                scalCellRight = mod(idxCellX, scalNumCellsX)+1;
-                scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
-                scalCellUp = mod(idxCellY, scalNumCellsY)+1;
-
-                vecCurrentCell = cellParticleList{idxCellX, idxCellY};  % cache — accessed twice
-
-                vecNeighborList = [ ...
-                    cellParticleList{scalCellLeft, scalCellDown}; ...
-                    cellParticleList{scalCellLeft, idxCellY}; ...
-                    cellParticleList{scalCellLeft, scalCellUp}; ...
-                    cellParticleList{idxCellX, scalCellDown}; ...
-                    vecCurrentCell; ... % reuse instead of re-indexing
-                    cellParticleList{idxCellX, scalCellUp}; ...
-                    cellParticleList{scalCellRight, scalCellDown}; ...
-                    cellParticleList{scalCellRight, idxCellY}; ...
-                    cellParticleList{scalCellRight, scalCellUp}];
-
-                % For each particle in the current cell, find neighbors in the neighbor list.
-                for idxNN = vecCurrentCell'
-                    vecCandidates = vecNeighborList(vecNeighborList > idxNN);  % [? x 1]
-                    scalNumCandidates = numel(vecCandidates);
-
-                    if scalNumCandidates == 0
-                        continue;
-                    end
-
-                    % Double buffer size only if needed
-                    if scalNumPairs + scalNumCandidates > scalMaxPairs
-                        scalMaxPairs  = 2 * scalMaxPairs;
-                        vecPairNN(scalMaxPairs) = 0;  % extends and zero-fills
-                        vecPairMM(scalMaxPairs) = 0;
-                    end
-
-                    vecPairNN(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
-                    vecPairMM(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecCandidates;
-                    scalNumPairs = scalNumPairs + scalNumCandidates;
-                end
-            end
+        if boolThreeD
+            [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
+                cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ, ...
+                vecPairNN, vecPairMM, scalMaxPairs);
+        else
+            [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
+                cellParticleList, scalNumCellsX, scalNumCellsY, ...
+                vecPairNN, vecPairMM, scalMaxPairs);
         end
 
         vecActivePairNN = vecPairNN(1:scalNumPairs);  % [scalNumPairs x 1]
@@ -291,20 +301,30 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % All arithmetic operates on [scalNumPairs x 1] vectors — no inner loops.
         % no mod() here because we need signed distances
-        vecSepX = vecPosX(vecActivePairMM) - vecPosX(vecActivePairNN);  % [scalNumPairs x 1]
-        vecSepX = vecSepX - scalBoxWidth * round(vecSepX / scalBoxWidth); % periodic wrap
-        vecSepY = vecPosY(vecActivePairMM) - vecPosY(vecActivePairNN);  % [scalNumPairs x 1]
+        vecSepX = vecPosX(vecActivePairMM) - vecPosX(vecActivePairNN);
+        vecSepX = vecSepX - scalBoxWidth  * round(vecSepX / scalBoxWidth);
+        vecSepY = vecPosY(vecActivePairMM) - vecPosY(vecActivePairNN);
         vecSepY = vecSepY - scalBoxHeight * round(vecSepY / scalBoxHeight);
+        if boolThreeD
+            vecSepZ = vecPosZ(vecActivePairMM) - vecPosZ(vecActivePairNN);
+            vecSepZ = vecSepZ - scalBoxDepth * round(vecSepZ / scalBoxDepth);
+        end
 
-        % Column-major linear index into matContactDist — faster than sub2ind
-        vecContactDist = matContactDist(vecActivePairNN + N*(vecActivePairMM-1));  % [scalNumPairs x 1]
+        vecContactDist = matContactDist(vecActivePairNN + N*(vecActivePairMM-1));
 
-        vecSepDistSq = vecSepX.^2 + vecSepY.^2; % [scalNumPairs x 1]
+        if boolThreeD
+            vecSepDistSq = vecSepX.^2 + vecSepY.^2 + vecSepZ.^2;
+        else
+            vecSepDistSq = vecSepX.^2 + vecSepY.^2;
+        end
         boolContact = vecSepDistSq < vecContactDist.^2;  % [scalNumPairs x 1] overlapping pairs only
 
         % Trim all arrays to only pairs in contac
         vecSepX = vecSepX(boolContact); % [scalNumContacts x 1]
         vecSepY = vecSepY(boolContact); % [scalNumContacts x 1]
+        if boolThreeD
+            vecSepZ = vecSepZ(boolContact);
+        end
         vecSepDistSq = vecSepDistSq(boolContact); % [scalNumContacts x 1]
         vecContactDist = vecContactDist(boolContact); % [scalNumContacts x 1]
         vecContactNN = vecActivePairNN(boolContact);% [scalNumContacts x 1]
@@ -313,7 +333,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         if options.hertzian
             vecRadiiNN = vecRadii(vecContactNN); % [scalNumContacts x 1]
             vecRadiiMM = vecRadii(vecContactMM); % [scalNumContacts x 1]
-            vecRadiiE = (vecRadiiNN .* vecRadiiMM) ./ (vecRadiiNN + vecRadiiMM); % [scalNumContacts x 1]
+            vecRadiiEff = (vecRadiiNN .* vecRadiiMM) ./ (vecRadiiNN + vecRadiiMM); % [scalNumContacts x 1]
         end
 
         vecSepDist = sqrt(vecSepDistSq); % [scalNumContacts x 1]
@@ -331,27 +351,40 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         % Unit vectors along contact normal
         vecNormalX = vecSepX ./ vecSepDist; % [scalNumContacts x 1]
         vecNormalY = vecSepY ./ vecSepDist; % [scalNumContacts x 1]
+        if boolThreeD
+            vecNormalZ = vecSepZ ./ vecSepDist;
+        end
 
         % Velocity-dependent dissipation projected onto contact normal
         scalReducedMass = M / 2; % may need to change this for non-uniform mass if the future
         vecRelVelDotNormal = (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecNormalX ...
-                           + (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecNormalY;  % [scalNumContacts x 1]
-        vecForceDissipative = scalDissipationVelocity * scalReducedMass .* vecRelVelDotNormal; % [scalNumContacts x 1]
+                           + (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecNormalY;
+        if boolThreeD
+            vecRelVelDotNormal = vecRelVelDotNormal ...
+                               + (vecVelZ(vecContactNN) - vecVelZ(vecContactMM)) .* vecNormalZ;
+        end
+        vecForceDissipative = scalDissipationVelocity * scalReducedMass .* vecRelVelDotNormal;
 
         % Net contact force components
-        vecForceContactX = (vecForceMag - vecForceDissipative) .* vecNormalX;  % [scalNumContacts x 1]
-        vecForceContactY = (vecForceMag - vecForceDissipative) .* vecNormalY;  % [scalNumContacts x 1]
+        vecForceContactX = (vecForceMag - vecForceDissipative) .* vecNormalX;
+        vecForceContactY = (vecForceMag - vecForceDissipative) .* vecNormalY;
+        if boolThreeD
+            vecForceContactZ = (vecForceMag - vecForceDissipative) .* vecNormalZ;
+        end
 
-        % distruute force sign to particles via Newton's 3rd law:
-        % particle vecContactNN gets +F, particle vecContactMM gets -F
+        % Distribute force via Newton's 3rd law
         vecForceX = accumarray(vecContactNN, vecForceContactX, [N 1]) ...
-                    - accumarray(vecContactMM, vecForceContactX, [N 1]);  % [N x 1]
+                  - accumarray(vecContactMM, vecForceContactX, [N 1]);
         vecForceY = accumarray(vecContactNN, vecForceContactY, [N 1]) ...
-                    - accumarray(vecContactMM, vecForceContactY, [N 1]);  % [N x 1]
+                  - accumarray(vecContactMM, vecForceContactY, [N 1]);
+        if boolThreeD
+            vecForceZ = accumarray(vecContactNN, vecForceContactZ, [N 1]) ...
+                      - accumarray(vecContactMM, vecForceContactZ, [N 1]);
+        end
 
         % Contact count per particle (coordination number)
         vecCoordNum = accumarray(vecContactNN, 1, [N 1]) ...
-                    + accumarray(vecContactMM, 1, [N 1]);  % [N x 1]
+                    + accumarray(vecContactMM, 1, [N 1]);
 
         vecPotentialEnergyHistory(nt) = sum(vecPotentialContact) / N;
 
@@ -360,24 +393,39 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         vecForceX = vecForceX - scalDissipationAbsolute .* vecVelX;  % [N x 1]
         vecForceY = vecForceY - scalDissipationAbsolute .* vecVelY;  % [N x 1]
+        if boolThreeD
+            vecForceZ = vecForceZ - scalDissipationAbsolute .* vecVelZ;
+        end
 
-        boolLeftWallContact  = vecPosX < vecDiameter/2;           % [N x 1]
-        boolRightWallContact = vecPosX > scalBoxWidth - vecDiameter/2;  % [N x 1]
+        boolLeftWallContact  = vecPosX < vecDiameter/2;
+        boolRightWallContact = vecPosX > scalBoxWidth - vecDiameter/2;
 
-        % floor-based wrap is faster than mod for near-zero displacements
-        vecPosX = vecPosX - scalBoxWidth  .* floor(vecPosX / scalBoxWidth);   % [N x 1] periodic left/right
-        vecPosY = vecPosY - scalBoxHeight .* floor(vecPosY / scalBoxHeight);  % [N x 1] periodic top/bottom
+        vecPosX = vecPosX - scalBoxWidth  .* floor(vecPosX / scalBoxWidth);
+        vecPosY = vecPosY - scalBoxHeight .* floor(vecPosY / scalBoxHeight);
+        if boolThreeD
+            vecPosZ = vecPosZ - scalBoxDepth .* floor(vecPosZ / scalBoxDepth);
+        end
 
-        vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2) / N;
+        if boolThreeD
+            vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2 + vecVelZ.^2) / N;
+        else
+            vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2) / N;
+        end
 
-        vecAccelX = vecForceX ./ M; % [N x 1]
-        vecAccelY = vecForceY ./ M - scalGravity;  % [N x 1]
+        vecAccelX = vecForceX ./ M;
+        vecAccelY = vecForceY ./ M - scalGravity;
+        if boolThreeD
+            vecAccelZ = vecForceZ ./ M;  % no gravity in Z
+        end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%% Second step in Verlet integration %%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         vecVelX = vecVelX + (vecAccelXPrev + vecAccelX) .* (scalTimestep/2);  % [N x 1]
         vecVelY = vecVelY + (vecAccelYPrev + vecAccelY) .* (scalTimestep/2);  % [N x 1]
+        if boolThreeD
+            vecPosZ = vecPosZ + vecVelZ*scalTimestep + vecAccelZPrev.*(scalTimestep^2/2);
+        end
 
         % Zero out rattlers (no contacts)
         boolRattler = (vecCoordNum == 0);          % [N x 1]
@@ -385,9 +433,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
         vecVelY(boolRattler) = 0;
         vecAccelX(boolRattler) = 0;
         vecAccelY(boolRattler) = 0;
+        if boolThreeD
+            vecVelZ(boolRattler) = 0;
+            vecAccelZ(boolRattler) = 0;
+        end
 
         vecAccelXPrev = vecAccelX;  % [N x 1]
         vecAccelYPrev = vecAccelY;  % [N x 1]
+        if boolThreeD
+            vecAccelZPrev = vecAccelZ;
+        end
 
         scalTotalContacts = sum(vecCoordNum) / 2;
         scalWallContacts = sum(boolLeftWallContact) + sum(boolRightWallContact);
@@ -413,6 +468,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
                 scalBoxHeight = scalBoxHeight * (1-scalCompressionRateFast);
                 vecPosX = vecPosX * (1-scalCompressionRateFast);  % [N x 1]
                 vecPosY = vecPosY * (1-scalCompressionRateFast);  % [N x 1]
+                if boolThreeD
+                    scalBoxDepth = scalBoxDepth * (1-scalCompressionRateFast);
+                    vecPosZ = vecPosZ * (1-scalCompressionRateFast);
+                end
                 boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
@@ -421,6 +480,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
                 scalBoxHeight = scalBoxHeight * (1-scalCompressionRateFast);
                 vecPosX = vecPosX * (1-scalCompressionRateFast);  % [N x 1]
                 vecPosY = vecPosY * (1-scalCompressionRateFast);  % [N x 1]
+                if boolThreeD
+                    scalBoxDepth = scalBoxDepth * (1-scalCompressionRateFast);
+                    vecPosZ = vecPosZ * (1-scalCompressionRateFast);
+                end
                 boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
@@ -429,6 +492,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
                 scalBoxHeight = scalBoxHeight * (1+scalCompressionRateFast);
                 vecPosX = vecPosX * (1+scalCompressionRateFast);  % [N x 1]
                 vecPosY = vecPosY * (1+scalCompressionRateFast);  % [N x 1]
+                if boolThreeD
+                    scalBoxDepth = scalBoxDepth * (1+scalCompressionRateFast);
+                    vecPosZ = vecPosZ * (1+scalCompressionRateFast);
+                end
                 boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
@@ -440,6 +507,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
                 scalBoxHeight = scalBoxHeight * (1-scalCompressionRate);
                 vecPosX = vecPosX * (1-scalCompressionRate);  % [N x 1]
                 vecPosY = vecPosY * (1-scalCompressionRate);  % [N x 1]
+                if boolThreeD
+                    scalBoxDepth = scalBoxDepth * (1-scalCompressionRate);
+                    vecPosZ = vecPosZ * (1-scalCompressionRate);
+                end
                 boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
@@ -448,51 +519,171 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, calc_eig, s
                 scalBoxHeight = scalBoxHeight * (1-scalCompressionRate);
                 vecPosX = vecPosX * (1-scalCompressionRate);  % [N x 1]
                 vecPosY = vecPosY * (1-scalCompressionRate);  % [N x 1]
+                if boolThreeD
+                    scalBoxDepth = scalBoxDepth * (1-scalCompressionRate);
+                    vecPosZ = vecPosZ * (1-scalCompressionRate);
+                end
                 boolConverged = true;
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure > P_target && scalEk < 1e-20
+                fprintf('Converged at step %d | P=%.4e\n', nt, scalPressure);
                 break;
             end
         end
     end
+    fprintf('Loop finished at step %d.\n', nt);
+
+    %% Remove rattlers before saving
+    fprintf('Running cleanRats...\n');
+    if boolThreeD
+        matPositions = [vecPosX, vecPosY, vecPosZ];
+        vecRadii = vecDiameter ./ 2;
+        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeight, scalBoxWidth, scalBoxDepth);
+        vecPosX = matPositions(:,1);
+        vecPosY = matPositions(:,2);
+        vecPosZ = matPositions(:,3);
+    else
+        matPositions = [vecPosX, vecPosY];
+        vecRadii = vecDiameter ./ 2;
+        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeight, scalBoxWidth);
+        vecPosX = matPositions(:,1);
+        vecPosY = matPositions(:,2);
+    end
+    vecDiameter = vecRadii .* 2;
+    N_clean = size(matPositions, 1);
+    fprintf('cleanRats complete. %d particles remaining (of %d original).\n', N_clean, N);
 
     %% Final plot
-    figure; hold on; axis equal;
-    for np = 1:N
-        rectangle('Position', [vecPosX(np) - vecDiameter(np)/2, ...
-                                vecPosY(np) - vecDiameter(np)/2, ...
-                                vecDiameter(np), vecDiameter(np)], ...
-            'Curvature', [1 1], 'EdgeColor', 'b', 'LineWidth', 1.5);
-    end
-    drawnow; hold off;
+    figure;
+    hold on;
+    if boolThreeD
+        [sx, sy, sz] = sphere(16);
 
-    %% Save results
-    scalRoundedWidth = round(sqrt(N));
-    strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-        save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        % Main particles
+        for np = 1:N
+            r = vecDiameter(np)/2;
+            surf(r*sx + vecPosX(np), r*sy + vecPosY(np), r*sz + vecPosZ(np), ...
+                'FaceColor', 'b', 'EdgeColor', 'none', 'FaceAlpha', 0.6);
+        end
+
+        % Ghost particles on +x, +y, +z faces
+        vecOffsets = [scalBoxWidth, 0, 0; ...
+                      0, scalBoxHeight, 0; ...
+                      0, 0, scalBoxDepth];  % [3 x 3] one offset per face
+
+        for iface = 1:3
+            ox = vecOffsets(iface, 1);
+            oy = vecOffsets(iface, 2);
+            oz = vecOffsets(iface, 3);
+            for np = 1:N
+                r = vecDiameter(np)/2;
+                surf(r*sx + vecPosX(np) + ox, ...
+                     r*sy + vecPosY(np) + oy, ...
+                     r*sz + vecPosZ(np) + oz, ...
+                    'FaceColor', 'r', 'EdgeColor', 'none', 'FaceAlpha', 0.15);
+            end
+        end
+
+        axis equal;
+        axis([-scalBoxWidth*0.0 2*scalBoxWidth ...
+              -scalBoxHeight*0.0 2*scalBoxHeight ...
+              -scalBoxDepth*0.0  2*scalBoxDepth]);
+        axis manual;
+        xlabel('x'); ylabel('y'); zlabel('z');
+        lighting gouraud;
+        camlight;
+        rotate3d on;
+
+    else
+        % Main particles
+        for np = 1:N_clean
+            rectangle('Position', [vecPosX(np) - vecDiameter(np)/2, ...
+                                    vecPosY(np) - vecDiameter(np)/2, ...
+                                    vecDiameter(np), vecDiameter(np)], ...
+                'Curvature', [1 1], 'FaceColor', 'b', 'EdgeColor', 'none');
+        end
+
+        % Ghost particles: all 8 surrounding tiles
+        vecOffsets2D = [scalBoxWidth,  0; ...
+                       -scalBoxWidth,  0; ...
+                        0,  scalBoxHeight; ...
+                        0, -scalBoxHeight; ...
+                        scalBoxWidth,  scalBoxHeight; ...
+                       -scalBoxWidth,  scalBoxHeight; ...
+                        scalBoxWidth, -scalBoxHeight; ...
+                       -scalBoxWidth, -scalBoxHeight];
+
+        for iface = 1:8
+            ox = vecOffsets2D(iface, 1);
+            oy = vecOffsets2D(iface, 2);
+            for np = 1:N_clean
+                rectangle('Position', [vecPosX(np) + ox - vecDiameter(np)/2, ...
+                                        vecPosY(np) + oy - vecDiameter(np)/2, ...
+                                        vecDiameter(np), vecDiameter(np)], ...
+                    'Curvature', [1 1], 'FaceColor', 'r', 'EdgeColor', 'none', ...
+                    'FaceAlpha', 0.15);
+            end
+        end
+
+        axis equal;
+        axis([-scalBoxWidth 2*scalBoxWidth -scalBoxHeight 2*scalBoxHeight]);
+    end
+    drawnow;
+    hold off;
+%% Save results
+
+    if boolThreeD
+        scalRoundedWidth = round(N^(1/3));
+        strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
+            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    else
+        scalRoundedWidth = round(sqrt(N));
+        strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
+            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    end
 
     if calc_eig
-        matPositions = [vecPosX, vecPosY];           % [N x 2]
-        vecRadii = vecDiameter ./ 2;             % [N x 1]
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeight, scalBoxWidth);
-        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeight, scalBoxWidth);  % [2N x 2N]
-        [matEigenVectors, matEigenValues] = eig(matHessian);  % [2N x 2N], [2N x 2N]
-        save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N', ...
-            'matEigenVectors', 'matEigenValues');
+        if boolThreeD
+            % 3D hessian not yet implemented — skip eigenmodes
+            warning('calc_eig not supported for 3D yet — saving positions only.');
+            save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                'scalBoxWidth', 'scalBoxHeight', 'scalBoxDepth', ...
+                'K', 'P_target', 'scalPressure', 'N');
+        else
+            matPositions = [vecPosX, vecPosY];
+            vecRadii = vecDiameter ./ 2;
+            [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeight, scalBoxWidth);
+            matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeight, scalBoxWidth);
+            [matEigenVectors, matEigenValues] = eig(matHessian);
+            save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N', ...
+                'matEigenVectors', 'matEigenValues');
+        end
     else
-        save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+        if boolThreeD
+            save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                'scalBoxWidth', 'scalBoxHeight', 'scalBoxDepth', ...
+                'K', 'P_target', 'scalPressure', 'N');
+        else
+            save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+        end
     end
+
+    fprintf('File saved to: %s\n', strFilename);
 
     if x_mult ~= 1 || y_mult ~= 1
-        packRepeatTile(N, K, P_target, scalRoundedWidth, seed, x_mult, y_mult, ...
-            calc_eig, save_path, save_path);
-        disp("Tile saved to: " + strFilename);
+        if ~boolThreeD
+            packRepeatTile(N, K, P_target, scalRoundedWidth, seed, x_mult, y_mult, ...
+                calc_eig, save_path, save_path);
+            disp("Tile saved to: " + strFilename);
+        else
+            warning('packRepeatTile not supported for 3D yet.');
+        end
     end
 
-     toc
+    toc
 end
 
 function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...
@@ -529,3 +720,147 @@ function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ..
 
 end
 
+function [vecPosX, vecPosY, vecPosZ, cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ] = ...
+        rebuildCellList3D(vecPosX, vecPosY, vecPosZ, scalBoxWidth, scalBoxHeight, scalBoxDepth, scalRawCellWidth, scalTimestep, N)
+
+    scalNumCellsX  = round(scalBoxWidth  / scalRawCellWidth);
+    scalCellWidthX = scalBoxWidth  / scalNumCellsX;
+    scalNumCellsY  = round(scalBoxHeight / scalRawCellWidth);
+    scalCellWidthY = scalBoxHeight / scalNumCellsY;
+    scalNumCellsZ  = round(scalBoxDepth  / scalRawCellWidth);
+    scalCellWidthZ = scalBoxDepth  / scalNumCellsZ;
+
+    % Sanity check
+    vecFloorX = floor(vecPosX / scalBoxWidth);
+    vecFloorY = floor(vecPosY / scalBoxHeight);
+    vecFloorZ = floor(vecPosZ / scalBoxDepth);
+    if any(abs(vecFloorX) > 1) || any(abs(vecFloorY) > 1) || any(abs(vecFloorZ) > 1)
+        error(['Particle moved more than one box length in a single timestep.\n' ...
+               'Reduce scalTimestep (currently %.4e).'], scalTimestep);
+    end
+
+    % Wrap into [0, L)
+    vecPosX = mod(vecPosX, scalBoxWidth);
+    vecPosY = mod(vecPosY, scalBoxHeight);
+    vecPosZ = mod(vecPosZ, scalBoxDepth);
+
+    % Map to cell indices
+    vecCellIdxX = min(max(ceil(vecPosX / scalCellWidthX), 1), scalNumCellsX);
+    vecCellIdxY = min(max(ceil(vecPosY / scalCellWidthY), 1), scalNumCellsY);
+    vecCellIdxZ = min(max(ceil(vecPosZ / scalCellWidthZ), 1), scalNumCellsZ);
+
+    % Linear index: x + Nx*(y-1) + Nx*Ny*(z-1)
+    vecCellLinearIdx = vecCellIdxX + scalNumCellsX*(vecCellIdxY-1) + scalNumCellsX*scalNumCellsY*(vecCellIdxZ-1);
+    cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY*scalNumCellsZ 1], @(x){x});
+    cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ);
+end
+
+function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
+        cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ, ...
+        vecPairNN, vecPairMM, scalMaxPairs)
+
+    scalNumPairs = 0;
+
+    for idxCellX = 1:scalNumCellsX
+        for idxCellY = 1:scalNumCellsY
+            for idxCellZ = 1:scalNumCellsZ
+
+                scalCellLeft  = mod(idxCellX-2, scalNumCellsX)+1;
+                scalCellRight = mod(idxCellX,   scalNumCellsX)+1;
+                scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
+                scalCellUp    = mod(idxCellY,   scalNumCellsY)+1;
+                scalCellBack  = mod(idxCellZ-2, scalNumCellsZ)+1;
+                scalCellFront = mod(idxCellZ,   scalNumCellsZ)+1;
+
+                vecCurrentCell = cellParticleList{idxCellX, idxCellY, idxCellZ};
+
+                vecNeighborList = [ ...
+                    cellParticleList{scalCellLeft,  scalCellDown, scalCellBack};  ...
+                    cellParticleList{scalCellLeft,  scalCellDown, idxCellZ};      ...
+                    cellParticleList{scalCellLeft,  scalCellDown, scalCellFront}; ...
+                    cellParticleList{scalCellLeft,  idxCellY,     scalCellBack};  ...
+                    cellParticleList{scalCellLeft,  idxCellY,     idxCellZ};      ...
+                    cellParticleList{scalCellLeft,  idxCellY,     scalCellFront}; ...
+                    cellParticleList{scalCellLeft,  scalCellUp,   scalCellBack};  ...
+                    cellParticleList{scalCellLeft,  scalCellUp,   idxCellZ};      ...
+                    cellParticleList{scalCellLeft,  scalCellUp,   scalCellFront}; ...
+                    cellParticleList{idxCellX,      scalCellDown, scalCellBack};  ...
+                    cellParticleList{idxCellX,      scalCellDown, idxCellZ};      ...
+                    cellParticleList{idxCellX,      scalCellDown, scalCellFront}; ...
+                    cellParticleList{idxCellX,      idxCellY,     scalCellBack};  ...
+                    vecCurrentCell;                                                ...
+                    cellParticleList{idxCellX,      idxCellY,     scalCellFront}; ...
+                    cellParticleList{idxCellX,      scalCellUp,   scalCellBack};  ...
+                    cellParticleList{idxCellX,      scalCellUp,   idxCellZ};      ...
+                    cellParticleList{idxCellX,      scalCellUp,   scalCellFront}; ...
+                    cellParticleList{scalCellRight, scalCellDown, scalCellBack};  ...
+                    cellParticleList{scalCellRight, scalCellDown, idxCellZ};      ...
+                    cellParticleList{scalCellRight, scalCellDown, scalCellFront}; ...
+                    cellParticleList{scalCellRight, idxCellY,     scalCellBack};  ...
+                    cellParticleList{scalCellRight, idxCellY,     idxCellZ};      ...
+                    cellParticleList{scalCellRight, idxCellY,     scalCellFront}; ...
+                    cellParticleList{scalCellRight, scalCellUp,   scalCellBack};  ...
+                    cellParticleList{scalCellRight, scalCellUp,   idxCellZ};      ...
+                    cellParticleList{scalCellRight, scalCellUp,   scalCellFront}];
+
+                for idxNN = vecCurrentCell'
+                    vecCandidates = vecNeighborList(vecNeighborList > idxNN);
+                    scalNumCandidates = numel(vecCandidates);
+                    if scalNumCandidates == 0; continue; end
+                    if scalNumPairs + scalNumCandidates > scalMaxPairs
+                        scalMaxPairs = 2 * scalMaxPairs;
+                        vecPairNN(scalMaxPairs) = 0;
+                        vecPairMM(scalMaxPairs) = 0;
+                    end
+                    vecPairNN(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
+                    vecPairMM(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecCandidates;
+                    scalNumPairs = scalNumPairs + scalNumCandidates;
+                end
+            end
+        end
+    end
+end
+
+function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
+        cellParticleList, scalNumCellsX, scalNumCellsY, ...
+        vecPairNN, vecPairMM, scalMaxPairs)
+
+    scalNumPairs = 0;
+
+    for idxCellX = 1:scalNumCellsX
+        for idxCellY = 1:scalNumCellsY
+
+            scalCellLeft  = mod(idxCellX-2, scalNumCellsX)+1;
+            scalCellRight = mod(idxCellX,   scalNumCellsX)+1;
+            scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
+            scalCellUp    = mod(idxCellY,   scalNumCellsY)+1;
+
+            vecCurrentCell = cellParticleList{idxCellX, idxCellY};
+
+            vecNeighborList = [ ...
+                cellParticleList{scalCellLeft,  scalCellDown}; ...
+                cellParticleList{scalCellLeft,  idxCellY};     ...
+                cellParticleList{scalCellLeft,  scalCellUp};   ...
+                cellParticleList{idxCellX,      scalCellDown}; ...
+                vecCurrentCell;                                ...
+                cellParticleList{idxCellX,      scalCellUp};   ...
+                cellParticleList{scalCellRight, scalCellDown}; ...
+                cellParticleList{scalCellRight, idxCellY};     ...
+                cellParticleList{scalCellRight, scalCellUp}];
+
+            for idxNN = vecCurrentCell'
+                vecCandidates = vecNeighborList(vecNeighborList > idxNN);
+                scalNumCandidates = numel(vecCandidates);
+                if scalNumCandidates == 0; continue; end
+                if scalNumPairs + scalNumCandidates > scalMaxPairs
+                    scalMaxPairs = 2 * scalMaxPairs;
+                    vecPairNN(scalMaxPairs) = 0;
+                    vecPairMM(scalMaxPairs) = 0;
+                end
+                vecPairNN(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
+                vecPairMM(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecCandidates;
+                scalNumPairs = scalNumPairs + scalNumCandidates;
+            end
+        end
+    end
+end
