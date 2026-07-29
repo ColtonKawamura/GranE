@@ -364,9 +364,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         if options.hertzian
             vecForceMag = -(4/3) .* K .* sqrt(vecRadiiEff) .* vecOverlap.^(3/2);
             vecPotentialContact = (4/3) .* (2/5) * K .* sqrt(vecRadiiEff) .* vecOverlap.^(5/2);
-        end
+        else
             vecForceMag = -K .* vecOverlap; % [scalNumContacts x 1]
-            vecPotentialContact = 0.5 * K .* vecOverlap.^2;      % [scalNumContacts x 1]
+            vecPotentialContact = 0.5 * K .* vecOverlap.^2;       % [scalNumContacts x 1]
         end
 
         % Unit vectors along contact normal
