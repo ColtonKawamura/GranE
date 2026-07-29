@@ -14,6 +14,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % calc_eig, Boolean: compute and save eigenmodes
     % save_path, Output directory
     % options.hertzian, Boolean: use Hertzian (nonlinear) contact law
+    %                Force = -4/3 K sqrt(R_eff) delta^(3/2)
+    %                Potential = 4/3 * 2/5 K sqrt(R_eff) delta^(5/2)
+    %                
     %
     % Example:
     % pack(400,100,1,1.4,1,.0001,1,false,1,1,false,'in/tiles/')
@@ -350,7 +353,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         if options.hertzian
             vecRadiiNN = vecRadii(vecContactNN); % [scalNumContacts x 1]
             vecRadiiMM = vecRadii(vecContactMM); % [scalNumContacts x 1]
-            vecRadiiEff = (vecRadiiNN .* vecRadiiMM) ./ (vecRadiiNN + vecRadiiMM); % [scalNumContacts x 1]
+            % this falls out of the math for two parabaloids https://en.wikipedia.org/wiki/Contact_mechanics
+            vecRadiiEff = (vecRadiiNN .* vecRadiiMM) ./ (vecRadiiNN + vecRadiiMM); % [scalNumContacts x 1] 
         end
 
         vecSepDist = sqrt(vecSepDistSq); % [scalNumContacts x 1]
@@ -358,9 +362,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         % Force magnitude and potential energy per contact
         if options.hertzian
-            vecForceMag = -K .* vecOverlap.^(3/2); % [scalNumContacts x 1]
-            vecPotentialContact = (2/5) * K .* vecOverlap.^(5/2);% [scalNumContacts x 1]
-        else
+            vecForceMag = -(4/3) .* K .* sqrt(vecRadiiEff) .* vecOverlap.^(3/2);
+            vecPotentialContact = (4/3) .* (2/5) * K .* sqrt(vecRadiiEff) .* vecOverlap.^(5/2);
+        end
             vecForceMag = -K .* vecOverlap; % [scalNumContacts x 1]
             vecPotentialContact = 0.5 * K .* vecOverlap.^2;      % [scalNumContacts x 1]
         end
