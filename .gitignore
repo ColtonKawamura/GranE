@@ -8,3 +8,6 @@
 *.csv
 *.log
 *.out
+/.DS_Store
+/data/.DS_Store
+/data/packings/.DS_Store
