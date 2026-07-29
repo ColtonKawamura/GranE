@@ -106,13 +106,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalPlotSkip = 1000;   % timesteps between plot updates
     scalCellUpdateInterval = 1;
 
-    % time step shoule be 1/100 of a particle oscillation period
+    % time step should be 1/100 of a particle oscillation period
     % For Hertzian, k_eff ~ 2K*sqrt(Reff*delta) is unknown at init,
-    % so use a conservative estimate based on R and delta
-    % estimate with Reff ~ D/4 (small-small contact)
-    % and delta ~ 1e-3 (min target pressure)
+    % so use a conservative estimate based on largest R and largest delta
+    % largest Reff ~ G*D/4 (large-large contact)
+    % and largest delta ~ 1e-1 (max target pressure)
     if options.hertzian
-        scalTimestep = 2*pi * sqrt(M / (2*K*sqrt(D/4 .* 1E-3))) * 0.01;
+        scalTimestep = 2*pi * sqrt(M / (2*K*sqrt(G*D/4 .* 1E-1))) * 0.01;
     else
         scalTimestep = 2*pi * sqrt(M/K) * 0.01;
     end
