@@ -44,14 +44,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % Check if packing already exists — skip if so
     if boolThreeD
         scalRoundedWidth = round(N^(1/3));
-        strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        if options.hertzian
+            strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        else
+            strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        end
     else
         scalRoundedWidth = round(sqrt(N));
-        strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-            save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        if options.hertzian
+            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        else
+            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        end
     end
-
     if isfile(strFilename)
         fprintf('Packing already exists, skipping: %s\n', strFilename);
         return;
