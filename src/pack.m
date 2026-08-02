@@ -61,7 +61,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
     rng(seed)
 
-    %% Box and particle setup
+%% Box and particle setup
     if boolThreeD
         scalBoxWidthX  = 2*N^(1/3)*D;   % Lx
         scalBoxHeightY = 2*N^(1/3)*D;   % Ly
@@ -82,6 +82,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     [~, vecSortIdx] = sort(rand(N, 1)); % [N x 1] randomize the particle indices
     vecDiameter = D * G * ones(N, 1); % [N x 1] default all to large
     vecDiameter(vecSortIdx(1:scalNumSmall)) = D; % overwrite bottom half with small
+
     if options.hertzian
         vecRadii = vecDiameter / 2; % [N x 1]
     end
@@ -374,7 +375,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecPotentialContact = (4/3) .* (2/5) * K .* sqrt(vecRadiiEff) .* vecOverlap.^(5/2);
         else
             vecForceMag = -K .* vecOverlap; % [scalNumContacts x 1]
-            vecPotentialContact = 0.5 * K .* vecOverlap.^2;       % [scalNumContacts x 1]
+            vecPotentialContact = 0.5 * K .* vecOverlap.^2; % [scalNumContacts x 1]
         end
 
         % Unit vectors along contact normal
@@ -482,9 +483,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % Pressure estimate from mean potential energy
         scalEp = vecPotentialEnergyHistory(nt);
         if options.hertzian
-            scalPressure = (scalEp * (5/2) / K)^(2/5);
+            scalPressure = (scalEp * (5/2) / K)^(2/5); % this has an implied d= 1 in the denominator
         else
-            scalPressure = sqrt(2 * scalEp / K);
+            scalPressure = sqrt(2 * scalEp / K); % this has an implied d= 1 in the denominator
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -600,7 +601,62 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         return;
     end
 
-    %% Final plot
+%% Compute linearized Hertzian contact stiffnesses at jammed state
+    if options.hertzian
+
+        % update data because cleanRats may have removed particles
+        vecRadii_final  = vecDiameter ./ 2;
+        matContactDist_final = (vecDiameter + vecDiameter') / 2;
+        scalNumFinal = numel(vecPosX);
+
+        vecHertzNN = zeros(scalNumFinal * 12, 1);
+        vecHertzMM = zeros(scalNumFinal * 12, 1);
+        vecHertzKeff  = zeros(scalNumFinal * 12, 1);
+        scalNumHertzContacts = 0;
+
+        for ii = 1:scalNumFinal
+            for jj = ii+1:scalNumFinal
+                dx = vecPosX(jj) - vecPosX(ii);
+                dy = vecPosY(jj) - vecPosY(ii);
+                dx = dx - scalBoxWidthX * round(dx / scalBoxWidthX);
+                dy = dy - scalBoxHeightY * round(dy / scalBoxHeightY);
+                if boolThreeD
+                    dz = vecPosZ(jj) - vecPosZ(ii);
+                    dz = dz - scalBoxDepthZ * round(dz / scalBoxDepthZ);
+                    scalDist = sqrt(dx^2 + dy^2 + dz^2);
+                else
+                    scalDist = sqrt(dx^2 + dy^2);
+                end
+
+                scalSumRadii = matContactDist_final(ii, jj); % grab the minimum distanced needed for contact
+                scalDelta = scalSumRadii - scalDist; % if negative, no contact
+
+                % Go through each contact and assign k = dF/d(delta) for F_hertzian
+                if scalDelta > 0
+                    scalReff = (vecRadii_final(ii) * vecRadii_final(jj)) / scalSumRadii; % effective radius from curvature
+                    scalKeff = 2 * K * sqrt(scalReff * scalDelta); % k_eff = dF/d(delta)
+                    scalNumHertzContacts = scalNumHertzContacts + 1; % this is indexes, so +1 because matlab isbase 1 
+
+                    % assign row (scalNumHertzContacts) a particle, the particle it's in contact with, and an k_eff
+                    vecHertzNN(scalNumHertzContacts) = ii; 
+                    vecHertzMM(scalNumHertzContacts) = jj;
+                    vecHertzKeff(scalNumHertzContacts) = scalKeff;
+                end
+
+            end
+        end
+
+        % these vectors where initiliazed with zeros
+        % trim them down so they only contact the contacts to save space in output file
+        vecHertzNN = vecHertzNN(1:scalNumHertzContacts);
+        vecHertzMM  = vecHertzMM(1:scalNumHertzContacts);
+        vecHertzKeff = vecHertzKeff(1:scalNumHertzContacts);
+
+        fprintf('Hertzian contacts: %d | mean k_eff=%.4f | min=%.4f | max=%.4f\n', ...
+            scalNumHertzContacts, mean(vecHertzKeff), min(vecHertzKeff), max(vecHertzKeff));
+    end
+
+%% Final plot
     figure;
     hold on;
     if boolThreeD
@@ -706,31 +762,59 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     fprintf('Packing fraction after cleanRats: %.4f\n', packingFraction);
 
     if calc_eig
+        % 3D hessian not yet implemented — skip eigenmodes
         if boolThreeD
-            % 3D hessian not yet implemented — skip eigenmodes
             warning('calc_eig not supported for 3D yet — saving positions only.');
-            save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+            if options.hertzian
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', ...
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+            else
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+            end
         else
             matPositions = [vecPosX, vecPosY];
             vecRadii = vecDiameter ./ 2;
             [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightY, scalBoxWidthX);
             matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightY, scalBoxWidthX);
             [matEigenVectors, matEigenValues] = eig(matHessian);
-            save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                'packingFraction', 'matEigenVectors', 'matEigenValues');
+            if options.hertzian
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
+                    'packingFraction', 'matEigenVectors', 'matEigenValues', ...
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+            else
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
+                    'packingFraction', 'matEigenVectors', 'matEigenValues');
+            end
         end
     else
         if boolThreeD
-            save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+            if options.hertzian
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', ...
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+            else
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+            end
         else
-            save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                'packingFraction');
+            if options.hertzian
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
+                    'N', 'N_original', 'packingFraction', ...
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+            else
+                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
+                    'N', 'N_original', 'packingFraction');
+            end
         end
     end
 
