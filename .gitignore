@@ -11,3 +11,4 @@
 /.DS_Store
 /data/.DS_Store
 /data/packings/.DS_Store
+venv/
