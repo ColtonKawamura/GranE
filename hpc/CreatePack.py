@@ -33,7 +33,7 @@ def main():
     plotit          = False
     calc_eig        = False
     hertzian        = True
-    save_path       = "./data/packings/hertz/"
+    save_path       = "./data/packings/2d/hertz/"
 
     output_file = "./commandsPack.txt"
 
