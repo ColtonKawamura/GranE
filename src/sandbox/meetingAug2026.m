@@ -27,7 +27,7 @@ xlabel('$x$', 'Interpreter', 'latex', 'FontSize', 20);
 ylabel('$y$', 'Interpreter', 'latex', 'FontSize', 20);
 zlabel('$u(x,y)$', 'Interpreter', 'latex', 'FontSize', 20);
 title(sprintf('Wavenumber: $k_x = %d,\\ k_y = %d$', kx_true, ky_true), ...
-    'Interpreter', 'latex', 'FontSize', 14);
+    'Interpreter', 'latex', 'FontSize', 20);
 
 matFreqAmps = fft2(matEigenVectors); % [sampledPointsX, sampledPointsY] turns amplitude into complex frequency
 matFreqAmps = fftshift(matFreqAmps); % shifts to centered around zero
@@ -46,11 +46,11 @@ kyVec = (-floor(Ny/2) : ceil(Ny/2)-1) / (Ny * samplingIntervalY);
 
 figure
 mesh(kxVec, kyVec, matFreqAmpMag)
-xlabel('$k_x$', 'Interpreter', 'latex', 'FontSize', 14);
-ylabel('$k_y$', 'Interpreter', 'latex', 'FontSize', 14);
-zlabel('$|\hat{U}|$', 'Interpreter', 'latex', 'FontSize', 14);
+xlabel('$k_x$', 'Interpreter', 'latex', 'FontSize', 20);
+ylabel('$k_y$', 'Interpreter', 'latex', 'FontSize', 20);
+zlabel('$|\hat{U}|$', 'Interpreter', 'latex', 'FontSize', 20);
 title(sprintf('Wavenumber: $k_x = %d,\\ k_y = %d$', kx_true, ky_true), ...
-    'Interpreter', 'latex', 'FontSize', 14);
+    'Interpreter', 'latex', 'FontSize', 20);
 
 % Find peak in full spectrum
 [maxMag] = max(matFreqAmpMag(:));
