@@ -3,11 +3,11 @@
 Lx = 1 ;
 Ly = 1;
 
-kx_true = 2;
-ky_true = 0;
+kx_true = 1;
+ky_true = 1;
 
-samplingIntervalX = 0.1;
-samplingIntervalY = 0.1;
+samplingIntervalX = 0.01;
+samplingIntervalY = 0.01;
 
 sampledPointsX = (0 : samplingIntervalX : Lx)';
 sampledPointsY = (0 : samplingIntervalY : Ly)';
@@ -18,7 +18,7 @@ sampledPointsY = (0 : samplingIntervalY : Ly)';
 % each index is (indexX, indexY) to get actual 
 % value of position for each index, you multiply index by sampling interval
 % or look up that index (indexX, indexY) in either sampledPointsX or sampledPointsY
-matEigenVectors = sin(2*pi * kx_true * matSampleCoordX + 2*pi * ky_true * matSampleCoordY); % [sampledPointsX, sampledPointsY]
+matEigenVectors = cos(2*pi * kx_true * matSampleCoordX + 2*pi * ky_true * matSampleCoordY); % [sampledPointsX, sampledPointsY]
 
 % Just for visual verificaiton of the data
 figure
@@ -26,6 +26,8 @@ mesh(sampledPointsX, sampledPointsY, matEigenVectors); % this brings them all to
 xlabel('$x$', 'Interpreter', 'latex', 'FontSize', 20);
 ylabel('$y$', 'Interpreter', 'latex', 'FontSize', 20);
 zlabel('$u(x,y)$', 'Interpreter', 'latex', 'FontSize', 20);
+title(sprintf('Wavenumber: $k_x = %d,\\ k_y = %d$', kx_true, ky_true), ...
+    'Interpreter', 'latex', 'FontSize', 14);
 
 matFreqAmps = fft2(matEigenVectors); % [sampledPointsX, sampledPointsY] turns amplitude into complex frequency
 matFreqAmps = fftshift(matFreqAmps); % shifts to centered around zero
@@ -47,10 +49,17 @@ mesh(kxVec, kyVec, matFreqAmpMag)
 xlabel('$k_x$', 'Interpreter', 'latex', 'FontSize', 14);
 ylabel('$k_y$', 'Interpreter', 'latex', 'FontSize', 14);
 zlabel('$|\hat{U}|$', 'Interpreter', 'latex', 'FontSize', 14);
+title(sprintf('Wavenumber: $k_x = %d,\\ k_y = %d$', kx_true, ky_true), ...
+    'Interpreter', 'latex', 'FontSize', 14);
 
 % Find peak in full spectrum
-[~, loc] = max(matFreqAmpMag(:));
-[iY, iX] = ind2sub(size(matFreqAmpMag), loc);
-kx_est = kxVec(iX);
-ky_est = kyVec(iY);
+[maxMag] = max(matFreqAmpMag(:));
+loc_candidates = find(matFreqAmpMag > 0.4 * maxMag);
+[iY_cands, iX_cands] = ind2sub(size(matFreqAmpMag), loc_candidates);
+kx_cands = kxVec(iX_cands);
+ky_cands = kyVec(iY_cands);
+dist = (kx_cands - kx_true).^2 + (ky_cands - ky_true).^2;
+bestIdx = find(dist == min(dist), 1);
+kx_est = kx_cands(bestIdx);
+ky_est = ky_cands(bestIdx);
 
