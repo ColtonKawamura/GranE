@@ -190,7 +190,6 @@ function processEigenModesDampedPara(in_path, out_path, dampingConstants, option
 					if options.periodic
 						%                   fprintf("***OLD VERSION \n")
 						% [Hessian, matDamp, matMass] = OLDmatSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, dampingConstant, fd.K, "periodic", true);
-                        fprintf("***New VERSION \n")
 						[Hessian, matDamp, matMass] = matSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, 0, dampingConstant, fd.K, "periodic", true);
                         Hessian(1:5, 1:5)
 					else
