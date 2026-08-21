@@ -69,7 +69,7 @@ function simEigenmode(strLoadPath, options)
         end
 
 
-        % Packing fields (Hungarian) — truncate to dynamic particles
+        % Packing fields  — truncate to dynamic particles
         vecX        = sPacking.x(:);
         vecY        = sPacking.y(:);
         vecDn       = sPacking.Dn(:);
@@ -129,7 +129,7 @@ function simEigenmode(strLoadPath, options)
     scalOmegaMode = imag(scalLambda);  % omega
     scalBetaMode  = real(scalLambda);  % attenuation beta
 
-    % Mode vector → per-particle dx,dy with Hungarian naming
+    % Mode vector → per-particle dx,dy
     vecModeRawReal = real(matEigenvectors(:, scalIdxMode));  % column, real part only
     scalNdof       = numel(vecModeRawReal);
 
