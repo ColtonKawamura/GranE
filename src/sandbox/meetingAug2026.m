@@ -1,3 +1,11 @@
+%% eigenmode sims
+
+
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.0001_Seed1_gamma_3.00e-03.mat", scalModeFreq=.1)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.1_Seed5_gamma_3.00e-03.mat", scalModeFreq=.1)
+
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/NEW.mat", scalModeFreq = .1, loadTestData=true)
+
 
 %% Toy model wave vector
 Lx = 1 ;
