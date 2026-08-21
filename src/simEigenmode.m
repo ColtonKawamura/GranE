@@ -578,7 +578,7 @@ try
     grid on;
 
     subplot(4,1,4);
-    plot(vecOmegaFFT, vecAmp, 'b-');
+    plot(vecOmegaFFT, vecAmp, 'w-');
     hold on;
     plot([scalOmegaMode, scalOmegaMode], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
     hold off;
