@@ -7,6 +7,7 @@ function simEigenmode(strLoadPath, options)
         options.fullSpectrum   (1,1) logical = false;
         options.visSim         (1,1) logical = false;
         options.loadTestData    (1,1) logical = false;
+        options.oldCode (1,1) logical = false;
     end
 
 %% Load eigenmode data and packing
@@ -79,6 +80,17 @@ function simEigenmode(strLoadPath, options)
         scalLx      = sPacking.Lx;
         scalLy      = sPacking.Ly;
         scalPTarget = sPacking.P_target;
+    end
+
+    % --- Fix eigenvectors from old matSpringDampMass (flip all y rows) ---
+    if options.oldCode
+        scalNdof = size(matEigenvectors, 1);
+        if mod(scalNdof, 2) ~= 0
+            error('simEigenmode:OldCodeFlip', ...
+                  'oldCode=true but DOF count %d is not 2*N.', scalNdof);
+        end
+        % Assuming ordering [x1;y1;x2;y2;...]
+        matEigenvectors(1:2:end, :) = -matEigenvectors(1:2:end, :);
     end
 
 
