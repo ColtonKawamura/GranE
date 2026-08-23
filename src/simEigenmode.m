@@ -59,10 +59,10 @@ function simEigenmode(strLoadPath, options)
             error('simEigenmode:ModeDOFParity', ...
                   'Mode DOF count (%d) is not even; expected 2*NumParticles.', scalNdofMode);
         end
-        scalNumPartDyn = scalNdofMode / 2  % number of particles with eigenvectors
+        scalNumPartDyn = scalNdofMode / 2;  % number of particles with eigenvectors
 
         if scalNumPartDyn ~= scalNumPart
-            fprintf(['[simEigenmode] WARNING: packing has scalNumPart=%d, ', ...
+            error(['[simEigenmode] WARNING: packing has scalNumPart=%d, ', ...
                      'but eigenvectors describe scalNumPartDyn=%d particles. ', ...
                      'Using scalNumPartDyn for dynamics (truncating packing).\n'], ...
                     scalNumPart, scalNumPartDyn);
@@ -90,7 +90,7 @@ function simEigenmode(strLoadPath, options)
                   'oldCode=true but DOF count %d is not 2*N.', scalNdof);
         end
         % Assuming ordering [x1;y1;x2;y2;...]
-        matEigenvectors(1:2:end, :) = -matEigenvectors(1:2:end, :);
+        matEigenvectors(2:2:end, :) = -matEigenvectors(2:2:end, :);
     end
 
 
@@ -184,7 +184,7 @@ try
     scalAmpDriving = scalPTarget / 100;      % unused in eigenmode test, kept for logging
     scalDt         = pi*sqrt(scalMassMin/scalSpringConst)*0.005;
     scalC0         = min(vecDn)*sqrt(scalSpringConst/scalMassMin);
-    scalNt         = round(1000*(scalLx/scalC0)/scalDt);
+    scalNt         = round(100*(scalLx/scalC0)/scalDt);
 
     fprintf('[simEigenmode] scalNt = %d, scalDt = %g\n', scalNt, scalDt);
 
@@ -287,7 +287,7 @@ try
     scalG    = 0;
 
 %% Probe particle time series (for frequency & attenuation check)
-    scalIdxProbe   = 11;                      % probe particle index
+    scalIdxProbe   = 20;                      % probe particle index
     vecProbeDispX  = zeros(scalNt, 1);
     vecProbeDispY  = zeros(scalNt, 1);
     vecProbeTime   = (0:scalNt-1).' * scalDt;
