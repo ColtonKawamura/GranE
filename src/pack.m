@@ -1,25 +1,5 @@
 function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, calc_eig, save_path, options)
 
-    %Function to create 2D packing with following input parameters:
-    % N,        Number of particles
-    % K,        Spring constant (Hookean) or Hertz prefactor
-    % D,        Average diameter
-    % G,        Ratio of large to small particle diameter (typically 1.4)
-    % M,        Mass of particles
-    % P_target, Targeted threshold pressure
-    % seed,     RNG seed
-    % plotit,   Boolean: plot during simulation
-    % x_mult,   Tile repeat factor in x
-    % y_mult,   Tile repeat factor in y
-    % calc_eig, Boolean: compute and save eigenmodes
-    % save_path, Output directory
-    % options.hertzian, Boolean: use Hertzian (nonlinear) contact law
-    %                Force = -4/3 K sqrt(R_eff) delta^(3/2)
-    %                Potential = 4/3 * 2/5 K sqrt(R_eff) delta^(5/2)
-    %                
-    %
-    % Example:
-    % pack(400,100,1,1.4,1,.0001,1,false,1,1,false,'in/tiles/')
 
     arguments
         N        (1,1) double {mustBeInteger, mustBePositive} = 100
