@@ -6,14 +6,14 @@ function simEigenmode(strLoadPath, options)
         options.scalModeAtten  (1,1) double  = 0;   % target beta
         options.fullSpectrum   (1,1) logical = false;
         options.visSim         (1,1) logical = false;
-        options.loadTestData    (1,1) logical = false;
-        options.oldCode (1,1) logical = false;
+        options.loadPolyData    (1,1) logical = false;
+        options.negDy (1,1) logical = false;
     end
 
 %% Load eigenmode data and packing
     strInPath = strLoadPath;
 
-    if options.loadTestData
+    if options.loadPolyData
         % Expect a struct "outData" with the fields:
         % pressure, damping, eigenVectors, eigenValues,
         % Ly, Lx, radii, positions, springConstant
@@ -83,11 +83,11 @@ function simEigenmode(strLoadPath, options)
     end
 
     % --- Fix eigenvectors from old matSpringDampMass (flip all y rows) ---
-    if options.oldCode
+    if options.negDy
         scalNdof = size(matEigenvectors, 1);
         if mod(scalNdof, 2) ~= 0
             error('simEigenmode:OldCodeFlip', ...
-                  'oldCode=true but DOF count %d is not 2*N.', scalNdof);
+                  'negDy=true but DOF count %d is not 2*N.', scalNdof);
         end
         % Assuming ordering [x1;y1;x2;y2;...]
         matEigenvectors(2:2:end, :) = -matEigenvectors(2:2:end, :);
@@ -184,7 +184,7 @@ try
     scalAmpDriving = scalPTarget / 100;      % unused in eigenmode test, kept for logging
     scalDt         = pi*sqrt(scalMassMin/scalSpringConst)*0.005;
     scalC0         = min(vecDn)*sqrt(scalSpringConst/scalMassMin);
-    scalNt         = round(100*(scalLx/scalC0)/scalDt);
+    scalNt         = round(500*(scalLx/scalC0)/scalDt);
 
     fprintf('[simEigenmode] scalNt = %d, scalDt = %g\n', scalNt, scalDt);
 

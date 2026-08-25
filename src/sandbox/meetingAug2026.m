@@ -3,15 +3,15 @@
 
 simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.0001_Seed1_gamma_3.00e-03.mat", scalModeFreq=.1)
 
-simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.1_Seed5_gamma_1.00e-02.mat", scalModeFreq=.00001, oldCode=true)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.1_Seed5_gamma_1.00e-02.mat", scalModeFreq=.00001, negDy=true)
 
-simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N16000_P0.1_Seed5_gamma_1.00e-03.mat", scalModeFreq=.02, oldCode=true)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N16000_P0.1_Seed5_gamma_1.00e-03.mat", scalModeFreq=.02, negDy=true)
 
-simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N1000_P0.1_Seed2_gamma_1.00e-03.mat", scalModeFreq=.00001, oldCode=true)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N1000_P0.1_Seed2_gamma_1.00e-03.mat", scalModeFreq=.00001, negDy=true)
 
-simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/NEW.mat", scalModeFreq = .1, loadTestData=true)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/NEW.mat", scalModeFreq = .1, loadPolyData=true)
 
-simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/OLD.mat", scalModeFreq = .001, loadTestData=true, oldCode=true)
+simEigenmode("/Users/coltonkawamura/repos/GranE/data/eigenData/OLD.mat", scalModeFreq = .001, loadPolyData=true, negDy=true)
 
 load("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N100_P0.1_Seed5_gamma_3.00e-03.mat")
 load("/Users/coltonkawamura/repos/GranE/data/eigenData/OLD.mat")
@@ -25,8 +25,6 @@ load("/Users/coltonkawamura/repos/GranE/data/eigenData/results_2D_iso_N16000_P0.
 %% process eignemodes:
 
 processEigenModesDampedPara("/Users/coltonkawamura/repos/GranE/data/packings/2d/hooke", "/Users/coltonkawamura/repos/GranME/data/junkyard/", [.01],"periodic", true, "serial", false, "singleFiles", true)
-
-
 
 
 
