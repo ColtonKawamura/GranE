@@ -600,14 +600,16 @@ try
     if options.loadPolyData
         plot([scalOmegaMode, scalOmegaMode], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
     else
-        plot([scalOmegaMode*10, scalOmegaMode*10], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
+        plot([scalOmegaMode*sqrt(scalSpringConst/scalMass), ...
+              scalOmegaMode*sqrt(scalSpringConst/scalMass)], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
     end
 
     hold off;
     if options.loadPolyData
         xlim([scalOmegaMode*.9, scalOmegaMode*1.1]);
     else
-        xlim([scalOmegaMode*.9*10, scalOmegaMode*1.1*10]);
+        xlim([scalOmegaMode*.9*sqrt(scalSpringConst/scalMass), ...
+              scalOmegaMode*1.1*sqrt(scalSpringConst/scalMass)]);
     end
     xlabel('$\omega$', 'Interpreter', 'latex', 'FontSize', 20);
     ylabel('$|\tilde{u}(\omega)|$', 'Interpreter', 'latex', 'FontSize', 20);
