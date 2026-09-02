@@ -8,8 +8,8 @@ clearvars
 thisFile = mfilename('fullpath');
 [thisDir, ~, ~] = fileparts(thisFile);
 
-packingDir = fullfile(thisDir, 'packing');
-outputDir  = fullfile(thisDir, 'testOutput');
+packingDir = fullfile(thisDir, 'testProcessEigenModesDampedPara', 'packing');
+outputDir    = fullfile(thisDir, 'testProcessEigenModesDampedPara', 'testOutput');
 
 processEigenModesDampedPara( ...
     packingDir, ...
