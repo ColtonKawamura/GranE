@@ -63,15 +63,28 @@ function processEigenModesDampedPara(in_path, out_path, dampingConstants, option
 		radii = loadedVars.Dn' / 2;
 		[positions, radii] = cleanRats(positions, radii, loadedVars.Ly, loadedVars.Lx);
 
+		% Build a packing struct for the new matSpringDampMass signature.
+		% New vecPosX/vecPosY + scalBox* names route getPackingData to the 2D
+		% new-format branch (cleaned positions + original box dims).
+		packing = struct( ...
+			'vecPosX',        positions(:, 1), ...
+			'vecPosY',        positions(:, 2), ...
+			'scalBoxWidthX',  loadedVars.Lx, ...
+			'scalBoxHeightY', loadedVars.Ly, ...
+			'vecDiameter',    radii * 2.0);
+		
 		for j = 1:numDamping
 			idx = idx +1;	
 		    dampingConstant = dampingConstants(j);
 		    fprintf('Serial processing pressure %f with damping %d \n', loadedVars.P, dampingConstant);
 
 		    if options.periodic
-			[Hessian, matDamp, matMass] = matSpringDampMass(positions, radii, loadedVars.Ly, loadedVars.Lx, dampingConstant, springConstant, "periodic", true);
+			[Hessian, matDamp, matMass] = matSpringDampMass(...)
+				packing, dampingConstant, springConstant, mass, ...
+					"periodic", true);
 		    else
-			[Hessian, matDamp, matMass] = matSpringDampMass(positions, radii, loadedVars.Ly, loadedVars.Lx, dampingConstant, springConstant);
+			[Hessian, matDamp, matMass] = matSpringDampMass(...)
+				packing, dampingConstant, springConstant, mass);
 		    end
 
 		    [eigenVectors_j, eigenValues_j] = polyeig(Hessian, matDamp, matMass);
@@ -187,13 +200,20 @@ function processEigenModesDampedPara(in_path, out_path, dampingConstants, option
 					fprintf('  [parfor file %d] pressure %.4g, damping %.4g\n', i, fd.P, dampingConstant);
 
 					% Build system matrices for this (file, damping) pair
+					% Build a packing struct for the new matSpringDampMass signature.
+					packing = struct( ...
+						'vecPosX',        fd.positions(:, 1), ...
+						'vecPosY',        fd.positions(:, 2), ...
+						'scalBoxWidthX',  fd.Lx, ...
+						'scalBoxHeightY', fd.Ly, ...
+						'vecDiameter',    fd.radii * 2.0);
 					if options.periodic
-						%                   fprintf("***OLD VERSION \n")
-						% [Hessian, matDamp, matMass] = OLDmatSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, dampingConstant, fd.K, "periodic", true);
-						[Hessian, matDamp, matMass] = matSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, 0, dampingConstant, fd.K, "periodic", true);
-                        Hessian(1:5, 1:5)
+						[Hessian, matDamp, matMass] = matSpringDampMass(...)
+							packing, dampingConstant, fd.K, 1, ...
+								"periodic", true);
 					else
-						[Hessian, matDamp, matMass] = matSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, dampingConstant, fd.K);
+						[Hessian, matDamp, matMass] = matSpringDampMass(...)
+							packing, dampingConstant, fd.K, 1);
 					end
 
 					% Solve the quadratic eigenvalue problem: (Hessian + lambda*matDamp + lambda^2*matMass)*v = 0
@@ -252,10 +272,20 @@ function processEigenModesDampedPara(in_path, out_path, dampingConstants, option
 					fprintf('  [parfor damp %d] pressure %.4g, damping %.4g\n', j, fd.P, dampingConstant);
 
 					% Build system matrices
+					% Build a packing struct for the new matSpringDampMass signature.
+					packing = struct( ...
+						'vecPosX',        fd.positions(:, 1), ...
+						'vecPosY',        fd.positions(:, 2), ...
+						'scalBoxWidthX',  fd.Lx, ...
+						'scalBoxHeightY', fd.Ly, ...
+						'vecDiameter',    fd.radii * 2.0);
 					if options.periodic
-						[Hessian, matDamp, matMass] = matSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, dampingConstant, fd.K, "periodic", true);
+						[Hessian, matDamp, matMass] = matSpringDampMass(...)
+							packing, dampingConstant, fd.K, 1, ...
+								"periodic", true);
 					else
-						[Hessian, matDamp, matMass] = matSpringDampMass(fd.positions, fd.radii, fd.Ly, fd.Lx, dampingConstant, fd.K);
+						[Hessian, matDamp, matMass] = matSpringDampMass(...)
+							packing, dampingConstant, fd.K, 1);
 					end
 
 					[eigenVectors_j, eigenValues_j] = polyeig(Hessian, matDamp, matMass);
