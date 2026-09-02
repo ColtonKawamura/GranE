@@ -597,9 +597,18 @@ try
     subplot(4,1,4);
     plot(vecOmegaFFT, vecAmp, 'w-');
     hold on;
-    plot([scalOmegaMode, scalOmegaMode], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
+    if options.loadPolyData
+        plot([scalOmegaMode, scalOmegaMode], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
+    else
+        plot([scalOmegaMode*10, scalOmegaMode*10], [0, scalAmpMax], 'r--', 'LineWidth', 1.5);
+    end
+
     hold off;
-    xlim([0, 2*scalOmegaMode]);
+    if options.loadPolyData
+        xlim([scalOmegaMode*.9, scalOmegaMode*1.1]);
+    else
+        xlim([scalOmegaMode*.9*10, scalOmegaMode*1.1*10]);
+    end
     xlabel('$\omega$', 'Interpreter', 'latex', 'FontSize', 20);
     ylabel('$|\tilde{u}(\omega)|$', 'Interpreter', 'latex', 'FontSize', 20);
     title(sprintf('$\\omega{\\mathrm{eig}} = %.4g,\\; \\omega{\\mathrm{max}} = %.4g$', ...
