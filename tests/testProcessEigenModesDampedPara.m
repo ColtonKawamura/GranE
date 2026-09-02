@@ -49,5 +49,5 @@ ev1 = outData.eigenValues{1};
 assert(isvector(ev1) && numel(ev1) == 400, ...
     'eigenValues{1} should contain 400 eigenvalues');
 
-disp('TESTmeetingAug2026: ALL PASSED');
+disp('Test - processeigenModesDampedPara: ALL PASSED');
 
