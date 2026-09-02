@@ -8,6 +8,7 @@ function simEigenmode(strLoadPath, options)
         options.visSim         (1,1) logical = false;
         options.loadPolyData    (1,1) logical = false;
         options.negDy (1,1) logical = false;
+        options.flagVarMass    (1,1) logical = false;
     end
 
 %% Load eigenmode data and packing
@@ -174,7 +175,11 @@ try
     vecY  = vecY(:);
     vecDn = vecDn(:);
 
-    vecMass                 = (pi/4) .* vecDn.^2;
+    if options.flagVarMass
+        vecMass                 = (pi/4) .* vecDn.^2;
+    else
+        vecMass = ones(size(vecDn));
+    end
     vecInvMass              = 1 ./ vecMass;
     scalMassParticleAverage = mean(vecMass);
     scalMassMin             = min(vecMass);
