@@ -619,35 +619,25 @@ try
     grid on;
 
 %% Save figure and compute eigen-frequency ratio
-    hFigure = gcf();
+    hFigure    = gcf();
     strOutDir  = fullfile('data', 'junkyard');
     if ~exist(strOutDir, 'dir')
-        mkdir(strOutDir);
+      mkdir(strOutDir);
     end
-    charPath         = char(strInPath);
-    cellPathParts    = strsplit(charPath, filesep);
-    strFName         = char(cellPathParts{end});
-    scalTail         = strlength(strFName);
-    if scalTail > 4 && strcmp(strFName(scalTail-3:scalTail), '.mat')
-      strFName = strFName(1:scalTail-4);
-    end
-    strPngName       = [strFName, '_figure_omega', num2str(scalOmegaMode, 5), '.png'];
-    strPngPath       = fullfile(strOutDir, strPngName);
+    strPngName = 'simEigenmode.png';
+    strPngPath = fullfile(strOutDir, strPngName);
     saveas(hFigure, strPngPath);
     fprintf('[simEigenmode] Figure saved to %s\n', strPngPath);
 
-    % Ratio of the physical eigen frequency to the FFT-peak frequency, using
-    % the same sqrt(K/m) scaling as the figure's eigen-frequency marker
-    % (non-polydata branch only). Equals ~1.0 when the mode is captured
-    % correctly by the FFT.
+    % Eigen-frequency ratio: physical eigen frequency / FFT-peak frequency.
     if options.loadPolyData
-        scalOmegaEigenPhys = scalOmegaMode;
+      scalOmegaEigenPhys = scalOmegaMode;
     else
-        scalOmegaEigenPhys = scalOmegaMode * sqrt(scalSpringConst/scalMass);
+      scalOmegaEigenPhys = scalOmegaMode * sqrt(scalSpringConst/scalMass);
     end
-    scalEigenFreqRatio = scalOmegaEigenPhys / scalOmegaMax;
+    scalEigenFreqRatio    = scalOmegaEigenPhys / scalOmegaMax;
     fprintf('[simEigenmode] Eigen-frequency ratio (omega_eig / omega_max) = %g\n', ...
-        scalEigenFreqRatio);
+      scalEigenFreqRatio);
 
 %% Save / log
     try
@@ -755,4 +745,3 @@ function visSim(x, x0, y, y0, idx, A, dampingConstant, pressureValue, omega, spr
         drawnow
     end
 end
-
