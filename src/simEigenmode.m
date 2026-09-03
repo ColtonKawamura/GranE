@@ -21,12 +21,12 @@ function scalEigenFreqRatio = simEigenmode(strLoadPath, options)
         load(strLoadPath)
 
         % Basic scalars
-        scalSpringConst = outData.springConstant;
-        scalPressure    = outData.pressure;
-        scalBv          = outData.damping;
-        scalLx          = outData.Lx;
-        scalLy          = outData.Ly;
-        scalWidth       = outData.Lx;
+        scalSpringConst = outData.springConstant(1);
+        scalPressure    = outData.pressure(1);
+        scalBv          = outData.damping(1);
+        scalLx          = outData.Lx(1);
+        scalLy          = outData.Ly(1);
+        scalWidth       = outData.Lx(1);
 
 
         % Eigenvalues / eigenvectors (stored in cells)
