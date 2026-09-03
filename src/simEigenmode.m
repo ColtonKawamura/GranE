@@ -1,4 +1,4 @@
-function simEigenmode(strLoadPath, options)
+function scalEigenFreqRatio = simEigenmode(strLoadPath, options)
 
     arguments
         strLoadPath (1,1) string
@@ -618,6 +618,27 @@ try
         'Interpreter', 'latex', 'FontSize', 20);
     grid on;
 
+%% Save figure and compute eigen-frequency ratio
+    hFigure    = gcf();
+    strOutDir  = fullfile('data', 'junkyard');
+    if ~exist(strOutDir, 'dir')
+      mkdir(strOutDir);
+    end
+    strPngName = 'simEigenmode.png';
+    strPngPath = fullfile(strOutDir, strPngName);
+    saveas(hFigure, strPngPath);
+    fprintf('[simEigenmode] Figure saved to %s\n', strPngPath);
+
+    % Eigen-frequency ratio: physical eigen frequency / FFT-peak frequency.
+    if options.loadPolyData
+      scalOmegaEigenPhys = scalOmegaMode;
+    else
+      scalOmegaEigenPhys = scalOmegaMode * sqrt(scalSpringConst/scalMass);
+    end
+    scalEigenFreqRatio    = scalOmegaEigenPhys / scalOmegaMax;
+    fprintf('[simEigenmode] Eigen-frequency ratio (omega_eig / omega_max) = %g\n', ...
+      scalEigenFreqRatio);
+
 %% Save / log
     try
         memTest('memlog.txt');
@@ -724,4 +745,3 @@ function visSim(x, x0, y, y0, idx, A, dampingConstant, pressureValue, omega, spr
         drawnow
     end
 end
-
