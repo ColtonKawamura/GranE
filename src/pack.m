@@ -15,11 +15,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         z_mult   (1,1) double = 0
         calc_eig (1,1) logical = false
         save_path (1,1) string = "./junkyard"
-        options.hertzian (1,1) logical = false
+        options.hertzian                   (1,1) logical = false
+        options.flagFrictionOn             (1,1) logical = false
+        options.scalFricCoef               (1,1) double        = 0.50
+        options.scalTangentialK            (1,1) double        = 1/3
+        options.scalGammaNormal            (1,1) double        = 0
+        options.scalGammaTangential        (1,1) double        = 0
+        options.saveFrictionalState        (1,1) logical       = false
     end
 
     % check to see if 3d path is needed
     boolThreeD = (z_mult ~= 0);
+
+            %% Guard: Cundall-Strack friction is implemented for 2D packings only.
+            %% 3D friction (rotation about 3 axes) requires a different model.
+    if boolThreeD && options.flagFrictionOn
+        error('pack:Friction3DNotSupported', 'flagFrictionOn = true is 2D only.');
+    end
+
 
     % Check if packing already exists — skip if so
     if boolThreeD
@@ -90,6 +103,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     boolConverged = false; % only update plot after each compression step
     boolCellUpdateNeeded = true; % make sure to update cell list on first step
     boolFastCompressPhase = true;
+             %% Cundall-Strack tangential friction parameters
+            %%   boolFrictionOn       = master switch; when false all friction
+            %%          paths below are skipped, relaxation identical to original.
+            %%   scalMu             = Coulomb coefficient; caps |F_t| <= mu*|F_n|.
+            %%   scalKtOverK        = tangential/normal stiffness ratio K_t/K
+            %%                        (Cundall-Strack reference: 1/3).
+            %%   scalGammaNormal    = normal dashpot prefactor; 0 keeps original.
+            %%   scalGammaTangential = tangential dashpot prefactor (optional).
+            %%   boolSaveFricState   = export fricState sidecar .mat before cleanRats.
+    boolFrictionOn          = options.flagFrictionOn;
+    scalMu                  = options.scalFricCoef;
+    scalKtOverK             = options.scalTangentialK;
+    scalKt                  = K * scalKtOverK;
+    scalGammaNormal          = options.scalGammaNormal;
+    scalGammaTangential     = options.scalGammaTangential;
+    boolSaveFricState       = options.saveFrictionalState;
+
+
 
 %% Display / simulation parameters
     boolPlotKE = false;
@@ -152,9 +183,31 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     if boolThreeD
         vecAccelZPrev = zeros(N, 1);  % [N x 1]
     end
+             %% Rotational DOFs for 2D disks (out-of-plane z rotation)
+            %%   vecOmega        = angular velocity omega_i [N x 1]
+            %%   vecAlphaPrev    = previous angular acceleration, Verlet half-step.
+            %%   Solid disk: I_i = (M_i * r_i^2) / 2,  alpha = torque / I
+    if boolFrictionOn
+        vecOmega       = zeros(N, 1);
+        vecAlphaPrev   = zeros(N, 1);
+    end
+
+
 
     vecKineticEnergyHistory   = zeros(scalMaxSteps, 1);  % [scalMaxSteps x 1]
     vecPotentialEnergyHistory = zeros(scalMaxSteps, 1);  % [scalMaxSteps x 1]
+
+
+             %% Cundall-Strack tangential spring state
+            %%   matUTan(i,j)    = tangential spring coord U for pair (i,j)
+            %%                   stored at linear index i + N*(j-1)
+            %%   matUTanStuck    = pair has overlapped at least once
+            %%   N x N matrix stores U for all N*(N-1)/2 pairs,
+            %%   matching Energy_Disk_VL.cpp.
+    if boolFrictionOn
+        matUTan       = zeros(N, N);
+        matUTanStuck  = false(N, N);
+    end
 
 %% Verlet cell list setup
     % Determine cell size rounded to be at least 1*G*D
@@ -401,7 +454,92 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                       - accumarray(vecContactMM, vecForceContactZ, [N 1]);
         end
 
-        % Contact count per particle (coordination number)
+        
+              %% =============================
+              %%  Cundall-Strack Tangential Friction
+              %%  Ref: CundallStrack_2D/Energy_Disk_VL.cpp
+              %%
+              %%  Tangential spring coord U_ij evolves:  dU/dt = v_t^total
+              %%  Capped by Coulomb:  |F_t| = K_t*|U|  <=  mu*|F_n|
+              %%  Tangential viscous damping (optional):
+              %%    F_t^visc = -gamma_t * m_red * v_t^total
+              %%  Torque:  tau_i = r_i * F_t
+              %%  t_hat = (n_y, -n_x)  normal rotated -90 degrees
+              %% =============================
+        if boolFrictionOn && ~boolThreeD
+            vecTorque  = zeros(N, 1);
+        end
+
+        if boolFrictionOn && ~boolThreeD && scalNumContacts > 0
+
+            % Per-contact state lookup (N x N matrix)
+            vecLinIdx = vecContactNN + N * (vecContactMM - 1);
+            vecUTan    = matUTan(vecLinIdx);
+            vecStuck   = matUTanStuck(vecLinIdx);
+            vecUTan(~vecStuck) = 0;
+
+            % Unit tangent: normal rotated -90 degrees in 2D
+            vecTanX =  vecNormalY;
+            vecTanY = -vecNormalX;
+
+            % Translational slip rate: (v_i - v_j) . t_hat
+            vecRelTan = ... 
+                (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecTanX + ...
+                (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecTanY;
+
+            % Rotational slip rate: -(omega_i*r_i + omega_j*r_j)
+            vecRi = vecDiameter(vecContactNN) / 2;
+            vecRj = vecDiameter(vecContactMM) / 2;
+            vecRelTan = vecRelTan - (... 
+                vecOmega(vecContactNN) .* vecRi + vecOmega(vecContactMM) .* vecRj);
+
+            % Advance tangential spring coordinate
+            vecUTan = vecUTan + vecRelTan * scalTimestep;
+
+            % Coulomb cap: |F_t| = K_t*|U| <= mu*|F_n|
+            vecFnAbs   = abs(vecForceMag);
+            vecUTanCap = scalMu .* vecFnAbs ./ scalKt;
+            vecUTan    = sign(vecUTan) .* min(vecUTanCap, abs(vecUTan));
+            matUTanStuck(vecLinIdx) = true;
+
+            % Tangential spring force: F_t = -K_t * U
+            vecFtMag = -scalKt .* vecUTan;
+
+            % Tangential contact energy: 0.5 * K_t * U^2
+            vecPotentialContact = vecPotentialContact + 0.5 * scalKt .* (vecUTan .^ 2);
+
+            % Optional tangential viscous damping
+            if scalGammaTangential > 0
+                vecFtMag = vecFtMag - (scalGammaTangential * (M / 2)) .* vecRelTan;
+            end
+
+            % Distribute tangential force via Newton's 3rd law
+            vecFtX = vecFtMag .* vecTanX;
+            vecFtY = vecFtMag .* vecTanY;
+            vecForceX = vecForceX + ...
+                accumarray(vecContactNN, vecFtX, [N 1]) - ...
+                accumarray(vecContactMM, vecFtX, [N 1]);
+            vecForceY = vecForceY + ...
+                accumarray(vecContactNN, vecFtY, [N 1]) - ...
+                accumarray(vecContactMM, vecFtY, [N 1]);
+
+            % Contact torques: tau_i = r_i * F_t,  tau_j = r_j * F_t
+            vecTorque = accumarray(vecContactNN,  vecRi .* vecFtMag, [N 1]) + ...
+                           accumarray(vecContactMM, vecRj .* vecFtMag, [N 1]);
+
+            % Persist updated tangential state
+            matUTan(vecLinIdx) = vecUTan;
+        end
+
+            % ============ Rotational velocity-Verlet half-step ============
+        if boolFrictionOn && ~boolThreeD
+            vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;
+            vecAlpha     = vecTorque ./ vecInertiaC;
+            vecOmega     = vecOmega + (vecAlphaPrev + vecAlpha) .* (scalTimestep / 2);
+            vecAlphaPrev = vecAlpha;
+        end
+
+% Contact count per particle (coordination number)
         vecCoordNum = accumarray(vecContactNN, 1, [N 1]) ...
                     + accumarray(vecContactMM, 1, [N 1]);
 
@@ -456,7 +594,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         if boolThreeD
             vecVelZ(boolRattler) = 0;
             vecAccelZ(boolRattler) = 0;
+        end             %% Zero rotational rates for rattlers (no contacts => no torque)
+        if boolFrictionOn && ~boolThreeD
+            vecOmega(boolRattler)       = 0;
+            vecAlphaPrev(boolRattler)   = 0;
         end
+
+
 
         vecAccelXPrev = vecAccelX;  % [N x 1]
         vecAccelYPrev = vecAccelY;  % [N x 1]
@@ -547,6 +691,21 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             end
         end
     end
+             %% Build and save frictional state on ORIGINAL indices
+            %%   (BEFORE cleanRats renumbers)
+            %%  Downstream frictional linear-response pipeline uses
+            %%  fricState to assemble the full frictional Hessian.
+    if boolFrictionOn && boolSaveFricState
+        fricState = buildFricState( ...
+            vecPosX, vecPosY, vecDiameter, ...
+            scalBoxWidthX, scalBoxHeightY, ...
+            matUTan, K, scalKt, scalMu, ...
+            scalGammaNormal, scalGammaTangential, M);
+        strFricFilename = [strFilename(1:end-4) '_FricState.mat'];
+        save(strFricFilename, 'fricState');
+        fprintf('fricState saved to: %s\n', strFricFilename);
+    end
+
     fprintf('Loop finished at step %d.\n', nt);
 
     %% Remove rattlers before saving
@@ -758,11 +917,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
                     'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         else
             matPositions = [vecPosX, vecPosY];
@@ -774,11 +933,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
                     'packingFraction', 'matEigenVectors', 'matEigenValues', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                    'packingFraction', 'matEigenVectors', 'matEigenValues');
+                    'packingFraction', 'matEigenVectors', 'matEigenValues', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         end
     else
@@ -787,22 +946,22 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
                     'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction');
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'packingFraction', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         else
             if options.hertzian
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
                     'N', 'N_original', 'packingFraction', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff');
+                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-                    'N', 'N_original', 'packingFraction');
+                    'N', 'N_original', 'packingFraction', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         end
     end
@@ -999,4 +1158,80 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( .
             end
         end
     end
+end
+
+function fricState = buildFricState( ...
+        vecPosX, vecPosY, vecDiameter, ...
+        scalBoxWidthX, scalBoxHeightY, ...
+        matUTan, K, Kt, mu, ...
+        gammaNormal, gammaTang, M)
+% buildFricState -- Rebuild the final contact graph at ORIGINAL
+% particle indices (before cleanRats) and export a fricState struct.
+%
+% O(N^2) pairwise loop. For large N, replace with a cell-list.
+%
+% Output struct fields (all on original N particles):
+%   vecContactNN / vecContactMM   [Nc x 1]  pair indices (i < j)
+%   vecOverlap                    [Nc x 1]  normal overlaps
+%   vecFn / vecFt                 [Nc x 1]  normal / tangential forces
+%   vecTanX / vecTanY             [Nc x 1]  unit tangent [n_y, -n_x]
+%   K, Kt, mu, gammaNormal, gammaTang, M
+%   vecRadius / vecInertia        [N x 1]
+%   N   original particle count
+%   boxLx / boxLy
+%   matUTan   [N x N]  tangential spring history
+
+    N           = size(vecPosX, 1);
+    vecRadius       = vecDiameter / 2;
+    vecInertia      = 0.5 * M .* (vecRadius .^ 2);
+
+    fricState = struct();
+    fricState.vecContactNN = zeros(0,1);
+    fricState.vecContactMM = zeros(0,1);
+    fricState.vecOverlap     = zeros(0,1);
+    fricState.vecFn          = zeros(0,1);
+    fricState.vecFt          = zeros(0,1);
+    fricState.vecTanX        = zeros(0,1);
+    fricState.vecTanY        = zeros(0,1);
+
+    for ii = 1:(N-1)
+        for jj = ii+1:N
+            dx = vecPosX(jj) - vecPosX(ii);
+            dy = vecPosY(jj) - vecPosY(ii);
+            dx = dx - scalBoxWidthX * round(dx / scalBoxWidthX);
+            dy = dy - scalBoxHeightY * round(dy / scalBoxHeightY);
+            dist = sqrt(dx^2 + dy^2);
+            if dist < 1e-12, continue; end
+            D_ij   = vecDiameter(ii) + vecDiameter(jj);
+            delta  = D_ij - dist;
+            if delta <= 0, continue; end
+            nx = dx / dist;
+            ny = dy / dist;
+            tx =  ny;
+            ty = -nx;
+            Fn   = -K * delta;
+            U    = matUTan(ii + N * (jj - 1));
+            Ft   = -Kt * U;
+            fricState.vecContactNN = [fricState.vecContactNN; ii];
+            fricState.vecContactMM = [fricState.vecContactMM; jj];
+            fricState.vecOverlap     = [fricState.vecOverlap;     delta];
+            fricState.vecFn          = [fricState.vecFn;          Fn];
+            fricState.vecFt          = [fricState.vecFt;          Ft];
+            fricState.vecTanX        = [fricState.vecTanX;        tx];
+            fricState.vecTanY        = [fricState.vecTanY;        ty];
+        end
+    end
+
+    fricState.K       = K;
+    fricState.Kt      = Kt;
+    fricState.mu      = mu;
+    fricState.gammaNormal = gammaNormal;
+    fricState.gammaTang   = gammaTang;
+    fricState.M       = M;
+    fricState.vecRadius = vecRadius;
+    fricState.vecInertia = vecInertia;
+    fricState.N     = N;
+    fricState.boxLx = scalBoxWidthX;
+    fricState.boxLy = scalBoxHeightY;
+    fricState.matUTan = matUTan;
 end
