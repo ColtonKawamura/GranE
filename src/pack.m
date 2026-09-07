@@ -15,13 +15,41 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         z_mult   (1,1) double = 0
         calc_eig (1,1) logical = false
         save_path (1,1) string = "./junkyard"
-        options.hertzian                   (1,1) logical = false
-        options.flagFrictionOn             (1,1) logical = false
-        options.scalFricCoef               (1,1) double        = 0.50
-        options.scalTangentialK            (1,1) double        = 1/3
-        options.scalGammaNormal            (1,1) double        = 0
-        options.scalGammaTangential        (1,1) double        = 0
-        options.saveFrictionalState        (1,1) logical       = false
+        % options is passed as a plain positional struct (the frictional test
+        % calls pack(...,save_path,opts)). A fully-defaulted struct means the
+        % frictionless 13-arg calls get all fields, and a caller may pass a
+        % partial struct; missing fields are backfilled below.
+        options (1,1) struct = struct('hertzian', false, ...
+            'flagFrictionOn', false, ...
+            'scalFricCoef', 0.50, ...
+            'scalTangentialK', 1/3, ...
+            'scalGammaNormal', 0, ...
+            'scalGammaTangential', 0, ...
+            'saveFrictionalState', false)
+    end
+
+     % Backfill any option fields a caller omitted so both the frictionless
+     % (13-arg) and frictional (14-arg with partial opts) call styles work.
+    if ~isfield(options, 'hertzian')
+        options.hertzian = false;
+    end
+    if ~isfield(options, 'flagFrictionOn')
+        options.flagFrictionOn = false;
+    end
+    if ~isfield(options, 'scalFricCoef')
+        options.scalFricCoef = 0.50;
+    end
+    if ~isfield(options, 'scalTangentialK')
+        options.scalTangentialK = 1/3;
+    end
+    if ~isfield(options, 'scalGammaNormal')
+        options.scalGammaNormal = 0;
+    end
+    if ~isfield(options, 'scalGammaTangential')
+        options.scalGammaTangential = 0;
+    end
+    if ~isfield(options, 'saveFrictionalState')
+        options.saveFrictionalState = false;
     end
 
     % check to see if 3d path is needed
@@ -388,9 +416,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         else
             vecSepDistSq = vecSepX.^2 + vecSepY.^2;
         end
-        boolContact = vecSepDistSq < vecContactDist.^2;  % [scalNumPairs x 1] overlapping pairs only
+        boolContact = vecSepDistSq < vecContactDist.^2;   % [scalNumPairs x 1] overlapping pairs only
+        scalNumContacts = sum(boolContact);   % [1 x 1] number of active contact pairs
 
-        % Trim all arrays to only pairs in contac
+         % Trim all arrays to only pairs in contact
         vecSepX = vecSepX(boolContact); % [scalNumContacts x 1]
         vecSepY = vecSepY(boolContact); % [scalNumContacts x 1]
         if boolThreeD
