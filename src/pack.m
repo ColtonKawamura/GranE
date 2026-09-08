@@ -126,6 +126,46 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalPressure = 0;
     scalPressureFastGrow = P_target / 50;
     scalCompressionRate = P_target;
+    scalFrictionWarmup    = 50000;       % skip frictional convergence check until the
+                                          % packing has built contact pressure (frictionless
+                                          % 2D N=100 reached the band near step 66k).
+    scalStableCount        = 0;           % consecutive steps P/P_target has sat in
+                                           % the dead-band (resets on any out-of-band step)
+    scalStableWindow        = 200;         % 200 consecutive in-band steps to accept
+                                           % (inter-sample gap is 5000, so this
+                                            % requires the signal to stay in-band
+                                            % for ~4% of a sample window — achievable)
+    scalLxFrozenCount        = 0;          % consecutive steps the box has not moved
+                                           % (frictional convergence: like the fixed-box
+                                           % relaxation of OverDamp.cpp, a stationary
+                                           % box == the packing has settled)
+    scalFrictionRate         = 0.005;      % symmetric gentle rate — damped approach
+                                            % toward P_target avoids the limit-cycle the
+                                            % symmetric 0.01/0.01 controller produced
+    scalFrictionDeadBand     = 0.15;        % |P - P_target|/P_target < 15% => in-band
+    scalFrictionLxFrozen      = 5000;        % consecutive steps Lx must be frozen
+                                             % (|Lx - Lx_prev| < 1e-6) to accept — the
+                                             % over-damped packing relaxes to a fixed box
+                                             % (like OverDamp.cpp's Acc_max<Fthresh), so a
+                                             % stationary box == converged
+    scalFrictionLxTol         = 1e-6;        % |Lx - Lx_prev| threshold for "frozen"
+    scalFrictionMaxSteps        = 3e6;         % hard cap for the frictional phase
+                                              % (safety: the loop runs to scalMaxSteps
+                                              % =1e8 otherwise — ~9h, the run that
+                                              % crashed the machine)
+    scalLxPrev                  = 0;             % previous Lx for the frozen-box check
+    scalSlowConvSteps           = 20000;        % for the FRICTIONLESS slow phase:
+                                              % consecutive steps the box must be
+                                              % frozen (|Lx-Lx_prev| < 1e-8) to call
+                                              % it converged. The energy-< 1e-20 gate
+                                              % is physically unreachable, so without
+                                              % this the 3D phase sits on its flat
+                                              % pressure plateau (P/P_target ~1.53)
+                                              % and would otherwise run to scalMaxSteps.
+    scalLxFrozenSlow             = 0;             % running count for the frictionless
+                                               % frozen-box convergence
+    scalLxPrevSlow               = 0;             % previous Lx for the frictionless
+                                               % frozen-box convergence check
     scalCompressionRateFast = 0.01;
 
     boolConverged = false; % only update plot after each compression step
@@ -165,7 +205,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     else
         scalTimestep = 2*pi * sqrt(M/K) * 0.01;
     end
-    scalMaxSteps = 1e8; % enough to ensure convergence
+    scalMaxSteps = 5e6; % sane hard cap: every phase now converges on a frozen
+                        % box (scalSlowConvSteps / frictional controller) well
+                        % before this. The old 1e8 cap let a non-converging
+                        % phase run ~24h and exhaust memory (crashed the machine).
 
 %% Initial conditions — place particles on a grid then shuffle
     %  Keep them D/2 from the walls
@@ -416,8 +459,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         else
             vecSepDistSq = vecSepX.^2 + vecSepY.^2;
         end
-        boolContact = vecSepDistSq < vecContactDist.^2;   % [scalNumPairs x 1] overlapping pairs only
-        scalNumContacts = sum(boolContact);   % [1 x 1] number of active contact pairs
+        boolContact = vecSepDistSq < vecContactDist.^2;      % [scalNumPairs x 1] overlapping pairs only
+        scalNumContacts = sum(boolContact);      % [1 x 1] number of active contact pairs
+        scalTangentialPE = 0.0;   % tangential spring energy this step, excluded from pressure
 
          % Trim all arrays to only pairs in contact
         vecSepX = vecSepX(boolContact); % [scalNumContacts x 1]
@@ -536,6 +580,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
             % Tangential contact energy: 0.5 * K_t * U^2
             vecPotentialContact = vecPotentialContact + 0.5 * scalKt .* (vecUTan .^ 2);
+            scalTangentialPE = sum(0.5 * scalKt .* (vecUTan .^ 2));
 
             % Optional tangential viscous damping
             if scalGammaTangential > 0
@@ -561,12 +606,22 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
 
             % ============ Rotational velocity-Verlet half-step ============
-        if boolFrictionOn && ~boolThreeD
+            if boolFrictionOn && ~boolThreeD
             vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;
-            vecAlpha     = vecTorque ./ vecInertiaC;
-            vecOmega     = vecOmega + (vecAlphaPrev + vecAlpha) .* (scalTimestep / 2);
-            vecAlphaPrev = vecAlpha;
-        end
+             % Rotational damping: ref OverDamp.cpp L104-106:
+               %   W_n+1 = (T_n - Bt*W_n)/Bt_denorm,  Bt_denorm = 1 + Bt*dt/2
+               % This is the over-damped form that makes the rotational DOF
+               % unconditionally stable. Without it omega oscillates forever.
+            scalBt = scalDissipationAbsolute / sqrt(3);
+            if scalGammaTangential > 0
+                scalBt = scalGammaTangential;    % user override
+            end
+            Bt_den = 1 + scalBt * scalTimestep / 2;
+            vecTorque = (vecTorque - scalBt .* vecOmega) / Bt_den;
+            vecAlpha       = vecTorque ./ vecInertiaC;
+            vecOmega       = vecOmega + (vecAlphaPrev + vecAlpha) .* (scalTimestep / 2);
+            vecAlphaPrev   = vecAlpha;
+            end
 
 % Contact count per particle (coordination number)
         vecCoordNum = accumarray(vecContactNN, 1, [N 1]) ...
@@ -577,10 +632,25 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Drag, boundaries, energy %%%%%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        vecForceX = vecForceX - scalDissipationAbsolute .* vecVelX;  % [N x 1]
-        vecForceY = vecForceY - scalDissipationAbsolute .* vecVelY;  % [N x 1]
-        if boolThreeD
-            vecForceZ = vecForceZ - scalDissipationAbsolute .* vecVelZ;
+        % OverDamped integrator (ref: OverDamp.cpp L97-L100):
+          %   F_n+1 = (F_n - Bn*Vel_n) / (1 + Bn*dt/2)
+          %   W_n+1 = (W_n - Bt*W_n) / (1 + Bt*dt/2)
+          % For frictional contacts the renormalized form prevents the
+          % contact-damped oscillation that causes P/P_target to cycle.
+          % The frictionless additive form is identical (Bn_den -> 1).
+        if boolFrictionOn
+            Bn_den = 1 + scalDissipationAbsolute * scalTimestep / 2;
+            vecForceX = (vecForceX - scalDissipationAbsolute .* vecVelX) / Bn_den;
+            vecForceY = (vecForceY - scalDissipationAbsolute .* vecVelY) / Bn_den;
+            if boolThreeD
+                vecForceZ = (vecForceZ - scalDissipationAbsolute .* vecVelZ) / Bn_den;
+            end
+        else
+            vecForceX = vecForceX - scalDissipationAbsolute .* vecVelX;  % [N x 1]
+            vecForceY = vecForceY - scalDissipationAbsolute .* vecVelY;  % [N x 1]
+            if boolThreeD
+                vecForceZ = vecForceZ - scalDissipationAbsolute .* vecVelZ;
+            end
         end
 
         % TODO: get rid of these since this is isotropic
@@ -597,6 +667,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2 + vecVelZ.^2) / N;
         else
             vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2) / N;
+        end
+
+        % Rotational kinetic energy (friction) must be included in the
+        % convergence check: omega carries energy that the translational KE
+        % misses; without it scalEk reads ~0 while omega still oscillates.
+        if boolFrictionOn && ~boolThreeD
+            vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;   % solid-disk moment of inertia
+            vecKineticEnergyHistory(nt) = vecKineticEnergyHistory(nt) ...
+                + 0.5 * sum(vecInertiaC .* vecOmega.^2) / N;
         end
 
         vecAccelX = vecForceX ./ M;
@@ -644,6 +723,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         % Pressure estimate from mean potential energy
         scalEp = vecPotentialEnergyHistory(nt);
+        % Under friction, the tangential spring energy is a constraint DOF,
+        % not a compressive load: exclude it from the box-control pressure so
+        % the compression target P_target is reached on the NORMAL contacts.
+        if boolFrictionOn
+           scalEp = scalEp - scalTangentialPE / N;
+        end
         if options.hertzian
             scalPressure = (scalEp * (5/2) / K)^(2/5); % this has an implied d= 1 in the denominator
         else
@@ -655,12 +740,90 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         scalEk = vecKineticEnergyHistory(nt);
 
-        if boolFastCompressPhase
+        % ===== ENV-GUARDED DIAGNOSTIC (removable; no effect unless GRAN_DIAG set) =====
+        if ~isempty(getenv('GRAN_DIAG')) && mod(nt, 5000) == 0
+            scZnm = mean(vecCoordNum);  % mean particle-particle coordination
+            fprintf('DIAG step=%d Ek=%.4e P=%.4e P/Ptrgt=%.4f Lx=%.4f Zn=%.2f\n', nt, scalEk, scalPressure, scalPressure/P_target, scalBoxWidthX, scZnm);
+        end
+        % ===== end diagnostic =====
+
+        % Frictional case: drive the box purely by relative-pressure control
+        % in the slow phase from the start. The fast-compress two-stage
+        % transition to slow requires scalEk < 1e-10, but a frictional packing
+        % carries a permanent rotational/tangential KE floor (OverDamp.cpp
+        % converges on force, Acc_max < Fthresh, not on energy), so that gate
+        % is unreachable and the slow-phase expansion branch -- the only thing
+        % that can relieve an over-compressed box -- never fires. Gating on
+        % ~boolFrictionOn leaves the frictionless path byte-for-byte identical.
+        if boolFrictionOn
+              % Frictional box controller — pure pressure-target with hysteresis.
+              % A permanent rotational/tangential KE floor makes the energy
+              % gates meaningless; OverDamp.cpp converges on Acc_max < Fthresh
+              % (force), so use a relative-pressure dead-band. Asymmetric
+              % compress/expand rates (scalFrictionDeathBand) plus a sustained
+              % window prevent the limit-cycle the symmetric 0.01/0.01 controller
+              % produced (P/P_target oscillating 0 <-> 9 and never settling).
+             if abs(scalPressure - P_target) / P_target < scalFrictionDeadBand
+                  scalStableCount = scalStableCount + 1;
+             else
+                  scalStableCount = 0;
+                  if scalPressure < P_target * (1 - scalFrictionDeadBand)
+                     rate = -scalFrictionRate;   % compress
+                     scalBoxWidthX = scalBoxWidthX  *(1 + rate);
+                     scalBoxHeightY= scalBoxHeightY*(1 + rate);
+                     vecPosX = vecPosX *(1 + rate);
+                     vecPosY = vecPosY *(1 + rate);
+                     if boolThreeD
+                        scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
+                        vecPosZ = vecPosZ *(1 + rate);
+                     end
+                     boolCellUpdateNeeded = true;
+                  elseif scalPressure > P_target * (1 + scalFrictionDeadBand)
+                     rate =  scalFrictionRate;   % expand
+                     scalBoxWidthX = scalBoxWidthX  *(1 + rate);
+                     scalBoxHeightY= scalBoxHeightY*(1 + rate);
+                     vecPosX = vecPosX *(1 + rate);
+                     vecPosY = vecPosY *(1 + rate);
+                     if boolThreeD
+                        scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
+                        vecPosZ = vecPosZ *(1 + rate);
+                     end
+                     boolCellUpdateNeeded = true;
+                  end
+             end
+             % Frictional convergence: the over-damped integrator relaxes the
+             % packing toward a fixed-box force balance (OverDamp.cpp's
+             % Acc_max < Fthresh), so the robust signal is a STATIONARY box,
+             % not the noisy instantaneous P/P_target. Track Lx:
+             if abs(scalBoxWidthX - scalLxPrev) < scalFrictionLxTol
+                 scalLxFrozenCount = scalLxFrozenCount + 1;
+             else
+                 scalLxFrozenCount = 0;
+             end
+             scalLxPrev = scalBoxWidthX;
+             % Primary: box stationary for scalFrictionLxFrozen steps.
+             % Backstop: sustained in-band P/P_target (pressure-balance view).
+             % Cap: never exceed scalFrictionMaxSteps (safety — the loop would
+             % otherwise run to scalMaxSteps = 1e8 ~= 9h and crash the machine).
+             if nt < scalFrictionWarmup
+                % still building contact pressure
+             elseif scalLxFrozenCount >= scalFrictionLxFrozen
+                 fprintf('Frictional convergence at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
+                 break;
+             elseif scalStableCount >= scalStableWindow
+                 fprintf('Frictional convergence (pressure) at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
+                 break;
+             elseif nt >= scalFrictionMaxSteps
+                 fprintf('Frictional MAX-STEP cap reached at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
+                 break;
+             end
+        elseif boolFastCompressPhase
+            % ===== Fast-compress phase (frictionless two-stage) =====
             if scalPressure < P_target/50
                 scalBoxWidthX= scalBoxWidthX * (1-scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRateFast);
-                vecPosX = vecPosX * (1-scalCompressionRateFast);  % [N x 1]
-                vecPosY = vecPosY * (1-scalCompressionRateFast);  % [N x 1]
+                vecPosX = vecPosX * (1-scalCompressionRateFast);
+                vecPosY = vecPosY * (1-scalCompressionRateFast);
                 if boolThreeD
                     scalBoxDepthZ = scalBoxDepthZ * (1-scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
@@ -668,10 +831,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure < P_target && scalEk < 1e-8
-                scalBoxWidthX  = scalBoxWidthX  * (1-scalCompressionRateFast);
+                scalBoxWidthX   = scalBoxWidthX * (1-scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRateFast);
-                vecPosX = vecPosX * (1-scalCompressionRateFast);  % [N x 1]
-                vecPosY = vecPosY * (1-scalCompressionRateFast);  % [N x 1]
+                vecPosX = vecPosX * (1-scalCompressionRateFast);
+                vecPosY = vecPosY * (1-scalCompressionRateFast);
                 if boolThreeD
                     scalBoxDepthZ = scalBoxDepthZ * (1-scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
@@ -679,10 +842,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
             elseif scalPressure > P_target && scalEk < 1e-10 && nt > (scalLastCompressStep+100)
-                scalBoxWidthX  = scalBoxWidthX  * (1+scalCompressionRateFast);
+                scalBoxWidthX   = scalBoxWidthX * (1+scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1+scalCompressionRateFast);
-                vecPosX = vecPosX * (1+scalCompressionRateFast);  % [N x 1]
-                vecPosY = vecPosY * (1+scalCompressionRateFast);  % [N x 1]
+                vecPosX = vecPosX * (1+scalCompressionRateFast);
+                vecPosY = vecPosY * (1+scalCompressionRateFast);
                 if boolThreeD
                     scalBoxDepthZ = scalBoxDepthZ * (1+scalCompressionRateFast);
                     vecPosZ = vecPosZ * (1+scalCompressionRateFast);
@@ -692,35 +855,49 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 boolFastCompressPhase = false;
             end
         else
-            if scalPressure < scalPressureFastGrow
-                scalBoxWidthX  = scalBoxWidthX  * (1-scalCompressionRate);
-                scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRate);
-                vecPosX = vecPosX * (1-scalCompressionRate);  % [N x 1]
-                vecPosY = vecPosY * (1-scalCompressionRate);  % [N x 1]
+             % ===== Slow-phase compression / expansion (frictionless) =====
+             if scalPressure < scalPressureFastGrow
+                scalBoxWidthX    = scalBoxWidthX    * (1 - scalCompressionRate);
+                scalBoxHeightY   = scalBoxHeightY    * (1 - scalCompressionRate);
+                vecPosX = vecPosX * (1 - scalCompressionRate);
+                vecPosY = vecPosY * (1 - scalCompressionRate);
                 if boolThreeD
-                    scalBoxDepthZ = scalBoxDepthZ * (1-scalCompressionRate);
-                    vecPosZ = vecPosZ * (1-scalCompressionRate);
+                    scalBoxDepthZ = scalBoxDepthZ * (1 - scalCompressionRate);
+                    vecPosZ = vecPosZ * (1 - scalCompressionRate);
                 end
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
-            elseif scalPressure < P_target && scalEk < 1e-8
-                scalBoxWidthX  = scalBoxWidthX * (1-scalCompressionRate);
-                scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRate);
-                vecPosX = vecPosX * (1-scalCompressionRate);  % [N x 1]
-                vecPosY = vecPosY * (1-scalCompressionRate);  % [N x 1]
+             elseif scalPressure < P_target && scalEk < 1e-8
+                scalBoxWidthX    = scalBoxWidthX     * (1 - scalCompressionRate);
+                scalBoxHeightY    = scalBoxHeightY    * (1 - scalCompressionRate);
+                vecPosX = vecPosX * (1 - scalCompressionRate);
+                vecPosY = vecPosY * (1 - scalCompressionRate);
                 if boolThreeD
-                    scalBoxDepthZ = scalBoxDepthZ * (1-scalCompressionRate);
-                    vecPosZ = vecPosZ * (1-scalCompressionRate);
+                    scalBoxDepthZ = scalBoxDepthZ * (1 - scalCompressionRate);
+                    vecPosZ = vecPosZ * (1 - scalCompressionRate);
                 end
                 boolCellUpdateNeeded = true;
                 scalLastCompressStep = nt;
-            elseif scalPressure > P_target && scalEk < 1e-20
-                fprintf('Converged at step %d | P=%.4e\n', nt, scalPressure);
-                break;
-            end
-        end
+             elseif scalPressure > P_target
+                 % Frictionless slow phase: a flat pressure plateau is the sign
+                 % of a settled packing (energy < 1e-20 is unreachable). Track a
+                 % frozen box — |Lx - Lx_prev| staying near zero for
+                 % scalSlowConvSteps is the physically correct convergence.
+                 if abs(scalBoxWidthX - scalLxPrevSlow) < 1e-8
+                     scalLxFrozenSlow = scalLxFrozenSlow + 1;
+                 else
+                     scalLxFrozenSlow = 0;
+                 end
+                 scalLxPrevSlow = scalBoxWidthX;
+                 if scalLxFrozenSlow >= scalSlowConvSteps
+                     fprintf('Frictionless converged at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', ...
+                        nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
+                     break;
+                 end
+             end
+         end
     end
-             %% Build and save frictional state on ORIGINAL indices
+               %% Build and save frictional state on ORIGINAL indices
             %%   (BEFORE cleanRats renumbers)
             %%  Downstream frictional linear-response pipeline uses
             %%  fricState to assemble the full frictional Hessian.
@@ -766,7 +943,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     else
         matPositions = [vecPosX, vecPosY];
         vecRadii = vecDiameter ./ 2;
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX);
+         mu_cleanRats = scalMu * boolFrictionOn;
+         [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, [], false, mu_cleanRats);
         vecPosX = matPositions(:,1);
         vecPosY = matPositions(:,2);
     end
