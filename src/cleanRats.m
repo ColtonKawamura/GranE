@@ -65,7 +65,7 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
 
                 if is3D
                     dz = positions(i,3) - positions(j,3);
-                    dz = dz - round(dz / Ly) * Ly;
+                    dz = dz - round(dz / Lz) * Lz;
                     r   = sqrt(dx^2 + dy^2 + dz^2);
                 else
                     r   = sqrt(dx^2 + dy^2);
