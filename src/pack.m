@@ -270,14 +270,14 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
 
              %% Cundall-Strack tangential spring state
-            %%   matUTan(i,j)    = tangential spring coord U for pair (i,j)
+            %%   matDispTan(i,j)   = tangential spring displacement for pair (i,j)
             %%                   stored at linear index i + N*(j-1)
-            %%   matUTanStuck    = pair has overlapped at least once
-            %%   N x N matrix stores U for all N*(N-1)/2 pairs,
+            %%   matDispTanStuck    = pair has overlapped at least once
+            %%   N x N matrices store the displacement for all N*(N-1)/2 pairs,
             %%   matching Energy_Disk_VL.cpp.
     if boolFrictionOn
-        matUTan       = zeros(N, N);
-        matUTanStuck  = false(N, N);
+        matDispTan       = zeros(N, N);
+        matDispTanStuck  = false(N, N);
     end
 
 %% Verlet cell list setup
@@ -533,7 +533,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               %%  Ref: CundallStrack_2D/Energy_Disk_VL.cpp
               %%
               %%  Tangential spring coord U_ij evolves:  dU/dt = v_t^total
-              %%  Capped by Coulomb:  |F_t| = K_t*|U|  <=  mu*|F_n|
+              %%  Capped by Coulomb:  |F_t| = K_t*|disp|  <=  mu*|F_n|
               %%  Tangential viscous damping (optional):
               %%    F_t^visc = -gamma_t * m_red * v_t^total
               %%  Torque:  tau_i = r_i * F_t
@@ -545,51 +545,51 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         if boolFrictionOn && ~boolThreeD && scalNumContacts > 0
 
-            % Per-contact state lookup (N x N matrix)
-            vecLinIdx = vecContactNN + N * (vecContactMM - 1);
-            vecUTan    = matUTan(vecLinIdx);
-            vecStuck   = matUTanStuck(vecLinIdx);
-            vecUTan(~vecStuck) = 0;
+            % Per-contact state lookup from the [N x N] tangential-displacement matrix
+            vecLinIdx = vecContactNN + N * (vecContactMM - 1);   % [scalNumContacts x 1] linear index into matDispTan
+            vecDispTan = matDispTan(vecLinIdx);                 % [scalNumContacts x 1] per-contact tangential displacement
+            vecStuck   = matDispTanStuck(vecLinIdx);            % [scalNumContacts x 1] per-contact "has-contacted" flag
+            vecDispTan(~vecStuck) = 0;
 
-            % Unit tangent: normal rotated -90 degrees in 2D
-            vecTanX =  vecNormalY;
-            vecTanY = -vecNormalX;
+            % Unit tangent: normal rotated -90 degrees in 2D,  t_hat = (n_y, -n_x)
+            vecUnitTanX =  vecNormalY;   % [scalNumContacts x 1] unit tangent x  ( = n_y)
+            vecUnitTanY = -vecNormalX;   % [scalNumContacts x 1] unit tangent y  ( = -n_x)
 
-            % Translational slip rate: (v_i - v_j) . t_hat
-            vecRelTan = ... 
-                (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecTanX + ...
-                (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecTanY;
+            % Total tangential slip rate (velocity): (v_i - v_j) . t_hat
+            vecVelTan = ...                   % [scalNumContacts x 1] total tangential slip rate
+                (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecUnitTanX + ...
+                (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecUnitTanY;
 
             % Rotational slip rate: -(omega_i*r_i + omega_j*r_j)
-            vecRi = vecDiameter(vecContactNN) / 2;
-            vecRj = vecDiameter(vecContactMM) / 2;
-            vecRelTan = vecRelTan - (... 
+            vecRi = vecDiameter(vecContactNN) / 2;   % [scalNumContacts x 1] radius of grain i
+            vecRj = vecDiameter(vecContactMM) / 2;   % [scalNumContacts x 1] radius of grain j
+            vecVelTan = vecVelTan - (...     % subtract rotational contribution
                 vecOmega(vecContactNN) .* vecRi + vecOmega(vecContactMM) .* vecRj);
 
-            % Advance tangential spring coordinate
-            vecUTan = vecUTan + vecRelTan * scalTimestep;
+            % Advance tangential displacement:  disp(t+dt) = disp(t) + vel(t)*dt
+            vecDispTan = vecDispTan + vecVelTan * scalTimestep;
 
-            % Coulomb cap: |F_t| = K_t*|U| <= mu*|F_n|
-            vecFnAbs   = abs(vecForceMag);
-            vecUTanCap = scalMu .* vecFnAbs ./ scalKt;
-            vecUTan    = sign(vecUTan) .* min(vecUTanCap, abs(vecUTan));
-            matUTanStuck(vecLinIdx) = true;
+            % Coulomb cap: |F_t| = K_t*|disp| <= mu*|F_n|  ->  clamp the displacement
+            vecFnAbs = abs(vecForceMag);                         % [scalNumContacts x 1] |F_n|
+            vecDispTanCap = scalMu .* vecFnAbs ./ scalKt;        % [scalNumContacts x 1] Coulomb cap = mu*|F_n|/K_t
+            vecDispTan = sign(vecDispTan) .* min(vecDispTanCap, abs(vecDispTan));
+            matDispTanStuck(vecLinIdx) = true;
 
-            % Tangential spring force: F_t = -K_t * U
-            vecFtMag = -scalKt .* vecUTan;
+            % Tangential spring force: F_t = -K_t * disp
+            vecFtMag = -scalKt .* vecDispTan;      % [scalNumContacts x 1] tangential force magnitude
 
-            % Tangential contact energy: 0.5 * K_t * U^2
-            vecPotentialContact = vecPotentialContact + 0.5 * scalKt .* (vecUTan .^ 2);
-            scalTangentialPE = sum(0.5 * scalKt .* (vecUTan .^ 2));
+            % Tangential contact energy: 0.5 * K_t * disp^2
+            vecPotentialContact = vecPotentialContact + 0.5 * scalKt .* (vecDispTan .^ 2);
+            scalTangentialPE = sum(0.5 * scalKt .* (vecDispTan .^ 2));   % [1 x 1] tangential PE this step
 
-            % Optional tangential viscous damping
+            % Optional tangential viscous damping (dashpot on the slip rate)
             if scalGammaTangential > 0
-                vecFtMag = vecFtMag - (scalGammaTangential * (M / 2)) .* vecRelTan;
+                vecFtMag = vecFtMag - (scalGammaTangential * (M / 2)) .* vecVelTan;
             end
 
             % Distribute tangential force via Newton's 3rd law
-            vecFtX = vecFtMag .* vecTanX;
-            vecFtY = vecFtMag .* vecTanY;
+            vecFtX = vecFtMag .* vecUnitTanX;   % [scalNumContacts x 1] tangential force x-component
+            vecFtY = vecFtMag .* vecUnitTanY;   % [scalNumContacts x 1] tangential force y-component
             vecForceX = vecForceX + ...
                 accumarray(vecContactNN, vecFtX, [N 1]) - ...
                 accumarray(vecContactMM, vecFtX, [N 1]);
@@ -601,8 +601,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecTorque = accumarray(vecContactNN,  vecRi .* vecFtMag, [N 1]) + ...
                            accumarray(vecContactMM, vecRj .* vecFtMag, [N 1]);
 
-            % Persist updated tangential state
-            matUTan(vecLinIdx) = vecUTan;
+            % Persist updated tangential displacement
+            matDispTan(vecLinIdx) = vecDispTan;   % write per-contact displacement back to the [N x N] matrix
         end
 
             % ============ Rotational velocity-Verlet half-step ============
@@ -905,7 +905,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         fricState = buildFricState( ...
             vecPosX, vecPosY, vecDiameter, ...
             scalBoxWidthX, scalBoxHeightY, ...
-            matUTan, K, scalKt, scalMu, ...
+            matDispTan, K, scalKt, scalMu, ...
             scalGammaNormal, scalGammaTangential, M);
         strFricFilename = [strFilename(1:end-4) '_FricState.mat'];
         save(strFricFilename, 'fricState');
@@ -1370,7 +1370,7 @@ end
 function fricState = buildFricState( ...
         vecPosX, vecPosY, vecDiameter, ...
         scalBoxWidthX, scalBoxHeightY, ...
-        matUTan, K, Kt, mu, ...
+        matDispTan, K, Kt, mu, ...
         gammaNormal, gammaTang, M)
 % buildFricState -- Rebuild the final contact graph at ORIGINAL
 % particle indices (before cleanRats) and export a fricState struct.
@@ -1381,12 +1381,12 @@ function fricState = buildFricState( ...
 %   vecContactNN / vecContactMM   [Nc x 1]  pair indices (i < j)
 %   vecOverlap                    [Nc x 1]  normal overlaps
 %   vecFn / vecFt                 [Nc x 1]  normal / tangential forces
-%   vecTanX / vecTanY             [Nc x 1]  unit tangent [n_y, -n_x]
+%   vecUnitTanX / vecUnitTanY     [Nc x 1]  unit tangent [n_y, -n_x]
 %   K, Kt, mu, gammaNormal, gammaTang, M
 %   vecRadius / vecInertia        [N x 1]
 %   N   original particle count
 %   boxLx / boxLy
-%   matUTan   [N x N]  tangential spring history
+%   matDispTan  [N x N]  tangential spring displacement history
 
     N           = size(vecPosX, 1);
     vecRadius       = vecDiameter / 2;
@@ -1398,8 +1398,8 @@ function fricState = buildFricState( ...
     fricState.vecOverlap     = zeros(0,1);
     fricState.vecFn          = zeros(0,1);
     fricState.vecFt          = zeros(0,1);
-    fricState.vecTanX        = zeros(0,1);
-    fricState.vecTanY        = zeros(0,1);
+    fricState.vecUnitTanX    = zeros(0,1);
+    fricState.vecUnitTanY    = zeros(0,1);
 
     for ii = 1:(N-1)
         for jj = ii+1:N
@@ -1416,16 +1416,16 @@ function fricState = buildFricState( ...
             ny = dy / dist;
             tx =  ny;
             ty = -nx;
-            Fn   = -K * delta;
-            U    = matUTan(ii + N * (jj - 1));
-            Ft   = -Kt * U;
+            Fn      = -K * delta;
+            DispTan = matDispTan(ii + N * (jj - 1));   % [1 x 1] pair tangential displacement
+            Ft      = -Kt * DispTan;
             fricState.vecContactNN = [fricState.vecContactNN; ii];
             fricState.vecContactMM = [fricState.vecContactMM; jj];
             fricState.vecOverlap     = [fricState.vecOverlap;     delta];
             fricState.vecFn          = [fricState.vecFn;          Fn];
             fricState.vecFt          = [fricState.vecFt;          Ft];
-            fricState.vecTanX        = [fricState.vecTanX;        tx];
-            fricState.vecTanY        = [fricState.vecTanY;        ty];
+            fricState.vecUnitTanX    = [fricState.vecUnitTanX;    tx];
+            fricState.vecUnitTanY    = [fricState.vecUnitTanY;    ty];
         end
     end
 
@@ -1440,5 +1440,5 @@ function fricState = buildFricState( ...
     fricState.N     = N;
     fricState.boxLx = scalBoxWidthX;
     fricState.boxLy = scalBoxHeightY;
-    fricState.matUTan = matUTan;
+    fricState.matDispTan = matDispTan;
 end
