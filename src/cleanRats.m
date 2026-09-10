@@ -4,18 +4,18 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
 % cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP)  — 3D + full PBC flag, frictionless
 % cleanRats(...)                                        — mu>0: frictional variant.
 %
-% FRictional variant: when mu > 0 the removal threshold relaxes to Zn > 0
-% (only true floaters are removed). A frictional jam carries load through
-% tangential friction at a structurally lower coordination number, so the
-% frictionless isostatic cut (Zn > 2 in 2D, Zn > 3 in 3D) would strip
-% legitimate jam members. The frictional case therefore keeps the full
-% contact network and only removes particles with zero contacts, giving a
-% physically meaningful frictional packing fraction.
+% Frictional variant (2D): when mu > 0 the removal threshold is Zn > 1,
+% not the frictionless Zn > 2.
 %
-% PHYSICS — isostatic coordination number.
-%   z_iso = 2(d+1)/(1+mu)
-%   mu=0: z_iso = 4 (3D), 3 (2D)
-%   mu>0: z_iso decreases, so the frictionless threshold is too strict.
+% PHYSICS — isostatic coordination number (Maxwell counting, 2D disks):
+%   Frictionless: DOF = 2N, constraints = Nz/2  =>  z_iso = 4.
+%   Frictional:   DOF = 3N, constraints = Nz    =>  z_iso = 3.
+% In this gravity-free, isotropically compressed packing, a particle with
+% Zn <= 1 cannot satisfy force–torque balance: with one contact,
+% sum(F) = F_1 and sum(tau) = r x F_1, both nonzero unless F_1 = 0. Such
+% particles are rattlers even with friction, so for mu > 0 we keep Zn >= 2
+% grains and remove Zn <= 1 (floaters + one-contact rattlers) as
+% frictional rattlers.
 %
 % All existing callers that omit mu use mu <= 0, so the frictionless
 % behavior (byte-for-byte identical). mu is the 7th positional argument;
@@ -30,7 +30,7 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
 
     boolFriction = (mu > 0);
     if boolFriction
-        fprintf('[cleanRats] mu=%.4f: frictional variant — keeping contact network, removing floaters only (Zn > 0)\n', mu);
+        fprintf('[cleanRats] mu=%.4f: frictional variant — keeping Zn>=2 backbone, removing Zn<=1 (floaters + one-contact rattlers)\n', mu);
     end
 
     changed = true;
@@ -81,8 +81,11 @@ function [positions, radii] = cleanRats(positions, radii, Ly, Lx, Lz, boolFullyP
         fprintf('[cleanRats] Zn distribution: min=%d, max=%d, mean=%.2f\n', min(Zn), max(Zn), mean(Zn));
 
         if boolFriction
-             % Frictional: only remove true floaters (Zn == 0).
-            to_keep = Zn > 0;
+             % Frictional 2D: remove Zn<=1 (floaters + one-contact rattlers).
+             % In this gravity-free model a 1-contact disk cannot satisfy
+             % force–torque balance, so it is a rattler even with friction.
+             % Keep only Zn >= 2 grains (frictional 2D isostatic z_iso = 3).
+            to_keep = Zn > 1;
         elseif is3D
             to_keep = Zn > 3;
         else
