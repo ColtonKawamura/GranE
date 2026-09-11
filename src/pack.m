@@ -937,6 +937,90 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         fprintf('Box dims: Lx=%.4f, Ly=%.4f\n', scalBoxWidthX, scalBoxHeightY);
     end
     fprintf('Radii range: min=%.4f, max=%.4f\n', min(vecDiameter/2), max(vecDiameter/2));
+
+    %% Plot packing BEFORE cleanRats
+    % Full jammed state on the ORIGINAL particle indices (all N particles,
+    % rattlers included). Same visual style as the post-cleanRats plot
+    % below: blue main particles + red periodic ghost tiles.
+    figure;
+    hold on;
+    if boolThreeD
+        [sx, sy, sz] = sphere(16);
+
+        % Main particles (full pre-cleanRats packing)
+        for np = 1:N
+            r = vecDiameter(np)/2;
+            surf(r*sx + vecPosX(np), r*sy + vecPosY(np), r*sz + vecPosZ(np), ...
+                'FaceColor', 'b', 'EdgeColor', 'none', 'FaceAlpha', 0.6);
+        end
+
+        % Ghost particles on +x, +y, +z faces
+        vecOffsets = [scalBoxWidthX, 0, 0; ...
+                      0, scalBoxHeightY, 0; ...
+                      0, 0, scalBoxDepthZ];  % [3 x 3] one offset per face
+
+        for iface = 1:3
+            ox = vecOffsets(iface, 1);
+            oy = vecOffsets(iface, 2);
+            oz = vecOffsets(iface, 3);
+            for np = 1:N
+                r = vecDiameter(np)/2;
+                surf(r*sx + vecPosX(np) + ox, ...
+                     r*sy + vecPosY(np) + oy, ...
+                     r*sz + vecPosZ(np) + oz, ...
+                    'FaceColor', 'r', 'EdgeColor', 'none', 'FaceAlpha', 0.15);
+            end
+        end
+
+        axis equal;
+        axis([-scalBoxWidthX*0.0 2*scalBoxWidthX ...
+              -scalBoxHeightY*0.0 2*scalBoxHeightY ...
+              -scalBoxDepthZ*0.0  2*scalBoxDepthZ]);
+        axis manual;
+        xlabel('x'); ylabel('y'); zlabel('z');
+        lighting gouraud;
+        camlight;
+        rotate3d on;
+        title(sprintf('Before cleanRats: N=%d, phi=%.4f', N, scalPackingFractionFull));
+
+    else
+        % Main particles (full pre-cleanRats packing)
+        for np = 1:N
+            rectangle('Position', [vecPosX(np) - vecDiameter(np)/2, ...
+                                    vecPosY(np) - vecDiameter(np)/2, ...
+                                    vecDiameter(np), vecDiameter(np)], ...
+                'Curvature', [1 1], 'FaceColor', 'b', 'EdgeColor', 'none');
+        end
+
+        % Ghost particles: all 8 surrounding tiles
+        vecOffsets2D = [scalBoxWidthX,  0; ...
+                       -scalBoxWidthX,  0; ...
+                        0,  scalBoxHeightY; ...
+                        0, -scalBoxHeightY; ...
+                        scalBoxWidthX,  scalBoxHeightY; ...
+                       -scalBoxWidthX,  scalBoxHeightY; ...
+                        scalBoxWidthX, -scalBoxHeightY; ...
+                       -scalBoxWidthX, -scalBoxHeightY];
+
+        for iface = 1:8
+            ox = vecOffsets2D(iface, 1);
+            oy = vecOffsets2D(iface, 2);
+            for np = 1:N
+                rectangle('Position', [vecPosX(np) + ox - vecDiameter(np)/2, ...
+                                        vecPosY(np) + oy - vecDiameter(np)/2, ...
+                                        vecDiameter(np), vecDiameter(np)], ...
+                    'Curvature', [1 1], 'FaceColor', 'r', 'EdgeColor', 'none', ...
+                    'FaceAlpha', 0.15);
+            end
+        end
+
+        axis equal;
+        axis([-scalBoxWidthX 2*scalBoxWidthX -scalBoxHeightY 2*scalBoxHeightY]);
+        title(sprintf('Before cleanRats: N=%d, phi=%.4f', N, scalPackingFractionFull));
+    end
+    drawnow;
+    hold off;
+
     % TODO: need to decide logic if I want to use PBC or not
     % for now, I'll assume fully periodic since weh're mostly done with DEM
     if boolThreeD
@@ -1017,7 +1101,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             scalNumHertzContacts, mean(vecHertzKeff), min(vecHertzKeff), max(vecHertzKeff));
     end
 
-%% Final plot
+%% Final plot (AFTER cleanRats — backbone only, rattlers removed)
     figure;
     hold on;
     if boolThreeD
@@ -1057,6 +1141,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         lighting gouraud;
         camlight;
         rotate3d on;
+        title(sprintf('After cleanRats: N=%d (of %d original)', N_clean, N));
 
     else
         % Main particles
@@ -1091,6 +1176,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         axis equal;
         axis([-scalBoxWidthX 2*scalBoxWidthX -scalBoxHeightY 2*scalBoxHeightY]);
+        title(sprintf('After cleanRats: N=%d (of %d original)', N_clean, N));
     end
     drawnow;
     hold off;
