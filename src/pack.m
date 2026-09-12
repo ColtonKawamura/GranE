@@ -126,34 +126,44 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalPressure = 0;
     scalPressureFastGrow = P_target / 50;
     scalCompressionRate = P_target;
-    scalFrictionWarmup    = 50000;       % skip frictional convergence check until the
-                                          % packing has built contact pressure (frictionless
-                                          % 2D N=100 reached the band near step 66k).
-    scalStableCount        = 0;           % consecutive steps P/P_target has sat in
-                                           % the dead-band (resets on any out-of-band step)
-    scalStableWindow        = 200;         % 200 consecutive in-band steps to accept
-                                           % (inter-sample gap is 5000, so this
-                                            % requires the signal to stay in-band
-                                            % for ~4% of a sample window — achievable)
-    scalLxFrozenCount        = 0;          % consecutive steps the box has not moved
-                                           % (frictional convergence: like the fixed-box
-                                           % relaxation of OverDamp.cpp, a stationary
-                                           % box == the packing has settled)
-    scalFrictionRate         = 0.005;      % symmetric gentle rate — damped approach
-                                            % toward P_target avoids the limit-cycle the
-                                            % symmetric 0.01/0.01 controller produced
-    scalFrictionDeadBand     = 0.15;        % |P - P_target|/P_target < 15% => in-band
-    scalFrictionLxFrozen      = 5000;        % consecutive steps Lx must be frozen
-                                             % (|Lx - Lx_prev| < 1e-6) to accept — the
-                                             % over-damped packing relaxes to a fixed box
-                                             % (like OverDamp.cpp's Acc_max<Fthresh), so a
-                                             % stationary box == converged
-    scalFrictionLxTol         = 1e-6;        % |Lx - Lx_prev| threshold for "frozen"
-    scalFrictionMaxSteps        = 3e6;         % hard cap for the frictional phase
-                                              % (safety: the loop runs to scalMaxSteps
-                                              % =1e8 otherwise — ~9h, the run that
-                                              % crashed the machine)
-    scalLxPrev                  = 0;             % previous Lx for the frozen-box check
+    %% Frictional (Cundall-Strack) compression protocol — 2D only.
+    %%
+    %% The OLD criterion (accept when |P-P_target|/P_target < 15% for 200 steps,
+    %% or when the box happens to stop moving) is NOT a convergence criterion:
+    %% the pressure estimate P = sqrt(2*Ep/K) is an instantaneous
+    %% overlap-energy proxy that spikes and collapses, so the dead-band fires
+    %% on a transient and the "frozen box" merely means the box paused between
+    %% moves. The packing was accepted at mean coordination Zn ~ 1.2 (loose
+    %% clump; frictional isostaticity is Zn ~ 3) with per-particle unbalanced
+    %% force ~ 70% of the mean contact force — not jammed.
+    %%
+    %% Correct protocol (literature: OverDamp.cpp's Acc_max < Fthresh, Vinutha
+    %% & Sastry DEM relaxation "<|F_tot|> < threshold", Silbert et al. pressure-
+    %% controlled compression): drive the box only while P is outside a dead-band
+    %% around P_target (compress when loose, expand when dense), HOLD the box
+    %% while P is in-band, and accept only when the grains are in FORCE BALANCE —
+    %% max_i |F_net,i| < tol * mean_contact_force — sustained for several hundred
+    %% consecutive in-band steps, with a percolating contact network
+    %% (mean Zn >= scalFrictionZmin). Force balance is the physically correct
+    %% "settled" signal: a balanced packing has ~zero accelerations, so KE
+    %% decays and P becomes a smooth function of box size (no limit cycle).
+    scalFrictionRate         = 0.005;      % box change per step while P is outside the dead-band
+    scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
+    scalFrictionForceTol     = 0.01;        % accept when max|F_net|/mean|F_contact| < 1%
+    scalFrictionBalCount      = 0;          % consecutive in-band steps satisfying force balance
+    scalFrictionBalWindow     = 300;        % sustained force-balance steps to accept
+    scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
+                                             % (frictional 2D isostatic z_iso = 3)
+    scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase (safety only)
+    scalFrictionVelDecay      = 0.10;       % per-step velocity/omega decay for the frictional
+                                             % relaxation. Damping rate = decay/dt ~ 16 per
+                                             % time unit >> contact spring frequency sqrt(K/M)=10,
+                                             % so the Cundall-Strack springs and rotational DOF
+                                             % are OVERDAMPED: energy drains out instead of
+                                             % feeding the P limit-cycle. The renormalized drag
+                                             % above is a no-op at this dt (Bn*dt ~ 3e-3).
+                                             % Gated on boolFrictionOn: the frictionless path
+                                             % is untouched.
     scalSlowConvSteps           = 20000;        % for the FRICTIONLESS slow phase:
                                               % consecutive steps the box must be
                                               % frozen (|Lx-Lx_prev| < 1e-8) to call
@@ -605,6 +615,20 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             matDispTan(vecLinIdx) = vecDispTan;   % write per-contact displacement back to the [N x N] matrix
         end
 
+        % Cundall-Strack: reset the tangential spring state for candidate
+        % pairs that have SEPARATED this step. A stale displacement would
+        % otherwise re-engage at full strength on re-contact and inject
+        % energy — a driver of the P limit-cycle. Only cell-list candidate
+        % pairs can become contacts on the next step, so resetting just those
+        % (O(pairs)) is sufficient.
+        if boolFrictionOn && ~boolThreeD
+            vecSeparating = vecActivePairNN(~boolContact) + N * (vecActivePairMM(~boolContact) - 1);
+            if ~isempty(vecSeparating)
+                matDispTan(vecSeparating) = 0;
+                matDispTanStuck(vecSeparating) = false;
+            end
+        end
+
             % ============ Rotational velocity-Verlet half-step ============
             if boolFrictionOn && ~boolThreeD
             vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;
@@ -688,9 +712,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         %%%%% Second step in Verlet integration %%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         vecVelX = vecVelX + (vecAccelXPrev + vecAccelX) .* (scalTimestep/2);  % [N x 1]
-        vecVelY = vecVelY + (vecAccelYPrev + vecAccelY) .* (scalTimestep/2);  % [N x 1]
+        vecVelY = vecVelY + (vecAccelYPrev + vecAccelY) .* (scalTimestep/2);
         if boolThreeD
                 vecVelZ = vecVelZ + (vecAccelZPrev + vecAccelZ) .* (scalTimestep/2);  % ← correct
+        end
+
+        % Over-damped frictional relaxation: drain energy out of the
+        % translational and rotational DOF every step so the Cundall-Strack
+        % springs settle into force balance instead of oscillating. Damping
+        % rate scalFrictionVelDecay/dt >> contact spring frequency, so the
+        % system is over-damped. Gated on boolFrictionOn so the frictionless
+        % path is untouched.
+        if boolFrictionOn
+            vecVelX = vecVelX * (1 - scalFrictionVelDecay);
+            vecVelY = vecVelY * (1 - scalFrictionVelDecay);
+            if boolThreeD
+                vecVelZ = vecVelZ * (1 - scalFrictionVelDecay);
+            end
+            vecOmega = vecOmega * (1 - scalFrictionVelDecay);
         end
 
         % Zero out rattlers (no contacts)
@@ -756,67 +795,94 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % that can relieve an over-compressed box -- never fires. Gating on
         % ~boolFrictionOn leaves the frictionless path byte-for-byte identical.
         if boolFrictionOn
-              % Frictional box controller — pure pressure-target with hysteresis.
-              % A permanent rotational/tangential KE floor makes the energy
-              % gates meaningless; OverDamp.cpp converges on Acc_max < Fthresh
-              % (force), so use a relative-pressure dead-band. Asymmetric
-              % compress/expand rates (scalFrictionDeathBand) plus a sustained
-              % window prevent the limit-cycle the symmetric 0.01/0.01 controller
-              % produced (P/P_target oscillating 0 <-> 9 and never settling).
-             if abs(scalPressure - P_target) / P_target < scalFrictionDeadBand
-                  scalStableCount = scalStableCount + 1;
-             else
-                  scalStableCount = 0;
-                  if scalPressure < P_target * (1 - scalFrictionDeadBand)
-                     rate = -scalFrictionRate;   % compress
-                     scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                     scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                     vecPosX = vecPosX *(1 + rate);
-                     vecPosY = vecPosY *(1 + rate);
-                     if boolThreeD
-                        scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                        vecPosZ = vecPosZ *(1 + rate);
-                     end
-                     boolCellUpdateNeeded = true;
-                  elseif scalPressure > P_target * (1 + scalFrictionDeadBand)
-                     rate =  scalFrictionRate;   % expand
-                     scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                     scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                     vecPosX = vecPosX *(1 + rate);
-                     vecPosY = vecPosY *(1 + rate);
-                     if boolThreeD
-                        scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                        vecPosZ = vecPosZ *(1 + rate);
-                     end
-                     boolCellUpdateNeeded = true;
+              % Frictional box controller + FORCE-BALANCE convergence.
+              % The box is driven toward P_target with a relative-pressure
+              % dead-band (compress when loose, expand when dense, HOLD when
+              % in-band). Convergence is NOT "box happened to stop moving" or
+              % "P in a band" (both are transients of the compression); it is
+              % per-particle FORCE BALANCE: max_i |F_net,i| / mean |F_contact|
+              % below a small tolerance, sustained for several hundred
+              % consecutive in-band steps, with a percolating contact network.
+              % This matches OverDamp.cpp's Acc_max < Fthresh and the DEM
+              % relaxation stopping criteria in the jamming literature.
+              boolBoxMoved = false;
+              if abs(scalPressure - P_target) / P_target < scalFrictionDeadBand
+                  % in-band: hold the box fixed; let the grains relax to balance
+                  boolBoxMoved = false;
+              elseif scalPressure < P_target * (1 - scalFrictionDeadBand)
+                  rate = -scalFrictionRate;   % compress (box too loose)
+                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
+                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
+                  vecPosX = vecPosX *(1 + rate);
+                  vecPosY = vecPosY *(1 + rate);
+                  if boolThreeD
+                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
+                     vecPosZ = vecPosZ *(1 + rate);
                   end
-             end
-             % Frictional convergence: the over-damped integrator relaxes the
-             % packing toward a fixed-box force balance (OverDamp.cpp's
-             % Acc_max < Fthresh), so the robust signal is a STATIONARY box,
-             % not the noisy instantaneous P/P_target. Track Lx:
-             if abs(scalBoxWidthX - scalLxPrev) < scalFrictionLxTol
-                 scalLxFrozenCount = scalLxFrozenCount + 1;
-             else
-                 scalLxFrozenCount = 0;
-             end
-             scalLxPrev = scalBoxWidthX;
-             % Primary: box stationary for scalFrictionLxFrozen steps.
-             % Backstop: sustained in-band P/P_target (pressure-balance view).
-             % Cap: never exceed scalFrictionMaxSteps (safety — the loop would
-             % otherwise run to scalMaxSteps = 1e8 ~= 9h and crash the machine).
-             if nt < scalFrictionWarmup
-                % still building contact pressure
-             elseif scalLxFrozenCount >= scalFrictionLxFrozen
-                 fprintf('Frictional convergence at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
-                 break;
-             elseif scalStableCount >= scalStableWindow
-                 fprintf('Frictional convergence (pressure) at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
-                 break;
-             elseif nt >= scalFrictionMaxSteps
-                 fprintf('Frictional MAX-STEP cap reached at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
-                 break;
-             end
+                  boolCellUpdateNeeded = true;
+                  boolBoxMoved = true;
+              else
+                  rate =  scalFrictionRate;   % expand (box too dense)
+                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
+                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
+                  vecPosX = vecPosX *(1 + rate);
+                  vecPosY = vecPosY *(1 + rate);
+                  if boolThreeD
+                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
+                     vecPosZ = vecPosZ *(1 + rate);
+                  end
+                  boolCellUpdateNeeded = true;
+                  boolBoxMoved = true;
+              end
+
+              % Force-balance measure: net contact force (normal + tangential)
+              % on each grain. A jammed, settled packing has ~zero net force on
+              % every grain (mechanical equilibrium under PBC). Normalized by
+              % the mean contact force so the threshold is scale-free.
+              if scalNumContacts > 0
+                  vecNetFx = accumarray(vecContactNN, vecForceContactX, [N 1]) ...
+                           - accumarray(vecContactMM, vecForceContactX, [N 1]) ...
+                           + accumarray(vecContactNN, vecFtX, [N 1]) ...
+                           - accumarray(vecContactMM, vecFtX, [N 1]);
+                  vecNetFy = accumarray(vecContactNN, vecForceContactY, [N 1]) ...
+                           - accumarray(vecContactMM, vecForceContactY, [N 1]) ...
+                           + accumarray(vecContactNN, vecFtY, [N 1]) ...
+                           - accumarray(vecContactMM, vecFtY, [N 1]);
+                  vecFnetMag     = sqrt(vecNetFx.^2 + vecNetFy.^2);
+                  scalMaxFnet    = max(vecFnetMag);
+                  scalMeanFc     = mean([abs(vecForceMag); abs(vecFtMag)]);
+                  scalForceRatio = scalMaxFnet / max(scalMeanFc, eps);
+              else
+                  scalForceRatio = inf;   % no contacts: not balanced, not percolating
+              end
+              scalMeanZn = mean(vecCoordNum);
+
+              % Acceptance: P in-band, contact network percolates, box held, and
+              % sustained force balance. The percolation guard (mean Zn) plus the
+              % "box held" guard prevent accepting a loose, unjammed state whose
+              % net force is trivially small simply because it carries no load.
+              boolInBand   = abs(scalPressure - P_target) / P_target < scalFrictionDeadBand;
+              boolPercol   = (scalMeanZn >= scalFrictionZmin);
+              boolBalanced = (scalForceRatio < scalFrictionForceTol);
+              if boolInBand && boolPercol && boolBalanced && ~boolBoxMoved
+                  scalFrictionBalCount = scalFrictionBalCount + 1;
+              else
+                  scalFrictionBalCount = 0;
+              end
+
+              if mod(nt, 5000) == 0
+                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanZn=%.2f | balCount=%d\n', ...
+                      nt, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanZn, scalFrictionBalCount);
+              end
+              if scalFrictionBalCount >= scalFrictionBalWindow
+                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanZn=%.2f\n', ...
+                      nt, scalPressure, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanZn);
+                  break;
+              elseif nt >= scalFrictionMaxSteps
+                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanZn=%.2f\n', ...
+                      nt, scalPressure, scalPressure / P_target, scalForceRatio, scalMeanZn);
+                  break;
+              end
         elseif boolFastCompressPhase
             % ===== Fast-compress phase (frictionless two-stage) =====
             if scalPressure < P_target/50
@@ -1501,7 +1567,11 @@ function fricState = buildFricState( ...
             dy = dy - scalBoxHeightY * round(dy / scalBoxHeightY);
             dist = sqrt(dx^2 + dy^2);
             if dist < 1e-12, continue; end
-            D_ij   = vecDiameter(ii) + vecDiameter(jj);
+            % Contact distance is the SUM OF RADII = (d_i + d_j)/2, NOT the sum
+            % of diameters. (vecDiameter(ii)+vecDiameter(jj)) would double-count
+            % and report ~2x overlaps, so buildFricState's forces/overlaps are
+            % only correct if this is (r_i + r_j).
+            D_ij   = (vecDiameter(ii) + vecDiameter(jj)) / 2;   % = r_i + r_j
             delta  = D_ij - dist;
             if delta <= 0, continue; end
             nx = dx / dist;
