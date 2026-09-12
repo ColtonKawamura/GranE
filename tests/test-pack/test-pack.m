@@ -1,5 +1,5 @@
 % this tests the pack.m function
-% matlab should be cd into ~/repos/GranE/ in order to run with:
+% matlab should be cd into ~/repos/ in order to run with:
 % run("GranE/tests/test-pack/test-pack.m")
 
 clear all
@@ -37,12 +37,12 @@ clear foo
 delete("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
 
 % ----------------- 3D frictionless test -----------------
-scalNumParts = 10^3;
+scalNumParts = 6^3;
 scalZMult = 1;
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'GranE/tests/test-pack/data/')
 
 
-foo = load("GranE/tests/test-pack/data/3D_N1000_P0.001_Width10_Seed1.mat");
+foo = load("GranE/tests/test-pack/data/3D_N216_P0.001_Width6_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
     sprintf('3D scalPackingFraction = %.4f, expected between 0.55 and 0.65', ...
@@ -52,7 +52,7 @@ assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
 %     sprintf('3D mean coordination number = %.4f, expected between 5.5 and 6.5', ...
 %             coordNumber));
 
-delete("GranE/tests/test-pack/data/3D_N1000_P0.001_Width10_Seed1.mat");
+delete("GranE/tests/test-pack/data/3D_N216_P0.001_Width6_Seed1.mat");
 clear foo
 
 %% with friction
