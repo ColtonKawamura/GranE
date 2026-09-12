@@ -35,6 +35,7 @@ assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
 scal2DPackFrac = foo.scalPackingFraction;
 clear foo
 delete("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
+delete("GranE/tests/test-pack/data/*.png");
 
 % ----------------- 3D frictionless test -----------------
 scalNumParts = 6^3;
@@ -53,6 +54,7 @@ assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
 %             foo.scalMeanCoordNum));
 
 delete("GranE/tests/test-pack/data/3D_N216_P0.001_Width6_Seed1.mat");
+delete("GranE/tests/test-pack/data/*.png");
 clear foo
 
 %% with friction
@@ -82,5 +84,6 @@ assert(foo.scalPackingFraction < scal2DPackFrac, ...
 
 clear foo
 delete("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
+delete("GranE/tests/test-pack/data/*.png");
 
 disp('pack.m: ALL PASSED');
