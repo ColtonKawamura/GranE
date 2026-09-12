@@ -855,14 +855,14 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               else
                   scalForceRatio = inf;   % no contacts: not balanced, not percolating
               end
-              scalMeanZn = mean(vecCoordNum);
+              scalMeanCoordNum = mean(vecCoordNum);
 
               % Acceptance: P in-band, contact network percolates, box held, and
               % sustained force balance. The percolation guard (mean Zn) plus the
               % "box held" guard prevent accepting a loose, unjammed state whose
               % net force is trivially small simply because it carries no load.
               boolInBand   = abs(scalPressure - P_target) / P_target < scalFrictionDeadBand;
-              boolPercol   = (scalMeanZn >= scalFrictionZmin);
+              boolPercol   = (scalMeanCoordNum >= scalFrictionZmin);
               boolBalanced = (scalForceRatio < scalFrictionForceTol);
               if boolInBand && boolPercol && boolBalanced && ~boolBoxMoved
                   scalFrictionBalCount = scalFrictionBalCount + 1;
@@ -871,16 +871,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               end
 
               if mod(nt, 5000) == 0
-                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanZn=%.2f | balCount=%d\n', ...
-                      nt, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanZn, scalFrictionBalCount);
+                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f | balCount=%d\n', ...
+                      nt, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount);
               end
               if scalFrictionBalCount >= scalFrictionBalWindow
-                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanZn=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanZn);
+                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
+                      nt, scalPressure, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
                   break;
               elseif nt >= scalFrictionMaxSteps
-                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanZn=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalForceRatio, scalMeanZn);
+                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
+                      nt, scalPressure, scalPressure / P_target, scalForceRatio, scalMeanCoordNum);
                   break;
               end
         elseif boolFastCompressPhase
