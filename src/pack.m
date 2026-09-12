@@ -181,6 +181,9 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     boolConverged = false; % only update plot after each compression step
     boolCellUpdateNeeded = true; % make sure to update cell list on first step
     boolFastCompressPhase = true;
+    scalMeanCoordNum = NaN;  % mean particle-particle coordination number,
+                             % tracked on EVERY pathway (frictionless /
+                             % frictional, 2D / 3D) and saved with the packing
              %% Cundall-Strack tangential friction parameters
             %%   boolFrictionOn       = master switch; when false all friction
             %%          paths below are skipped, relaxation identical to original.
@@ -760,6 +763,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         scalNumRattlers = sum(boolRattler);
         scalExcessContacts = scalTotalContacts + scalWallContacts - 2*(N - scalNumRattlers);
 
+        % Mean particle-particle coordination number (full packing, rattlers
+        % included). Tracked on every pathway — frictionless and frictional,
+        % 2D and 3D — so the converged value is saved with the packing for
+        % comparison against the jamming literature (2D frictionless z_iso ~
+        % 4, 2D frictional z_iso = 3, 3D frictionless z_iso ~ 6).
+        scalMeanCoordNum = mean(vecCoordNum);
+
         % Pressure estimate from mean potential energy
         scalEp = vecPotentialEnergyHistory(nt);
         % Under friction, the tangential spring energy is a constraint DOF,
@@ -855,7 +865,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               else
                   scalForceRatio = inf;   % no contacts: not balanced, not percolating
               end
-              scalMeanCoordNum = mean(vecCoordNum);
 
               % Acceptance: P in-band, contact network percolates, box held, and
               % sustained force balance. The percolation guard (mean Zn) plus the
@@ -979,6 +988,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
 
     fprintf('Loop finished at step %d.\n', nt);
+    N_original = numel(vecPosX);  % particle count before cleanRats (for plot titles)
 
     %% Remove rattlers before saving
     if boolThreeD
@@ -1086,6 +1096,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
     drawnow;
     hold off;
+
+    % Export the before-cleanRats packing photo. strFilename already includes
+    % save_path, so just swap the extension; the export mirrors the .mat's
+    % own path resolution, and a failed export never aborts the run.
+    % Frictional runs get a '_Fric' tag so their photos don't clobber the
+    % frictionless ones (the .mat names for the two 2D pathways collide).
+    try
+        strPngTag = '';
+        if boolFrictionOn
+            strPngTag = '_Fric';
+        end
+        strBeforePng = [strFilename(1:end-4) strPngTag '_BeforeCleanRats.png'];
+        print(gcf, strBeforePng, '-dpng', '-r120');
+        fprintf('Packing photo saved to: %s\n', strBeforePng);
+    catch ME
+        warning('pack:PNGExportFailed', 'Could not export before-cleanRats plot: %s', ME.message);
+    end
 
     % TODO: need to decide logic if I want to use PBC or not
     % for now, I'll assume fully periodic since weh're mostly done with DEM
@@ -1207,7 +1234,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         lighting gouraud;
         camlight;
         rotate3d on;
-        title(sprintf('After cleanRats: N=%d (of %d original)', N_clean, N));
+        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', N_clean, N_original, scalMeanCoordNum));
 
     else
         % Main particles
@@ -1242,10 +1269,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         axis equal;
         axis([-scalBoxWidthX 2*scalBoxWidthX -scalBoxHeightY 2*scalBoxHeightY]);
-        title(sprintf('After cleanRats: N=%d (of %d original)', N_clean, N));
+        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', N_clean, N_original, scalMeanCoordNum));
     end
     drawnow;
     hold off;
+
+    % Export the after-cleanRats packing photo (backbone only)
+    try
+        strPngTag = '';
+        if boolFrictionOn
+            strPngTag = '_Fric';
+        end
+        strAfterPng = [strFilename(1:end-4) strPngTag '_AfterCleanRats.png'];
+        print(gcf, strAfterPng, '-dpng', '-r120');
+        fprintf('Packing photo saved to: %s\n', strAfterPng);
+    catch ME
+        warning('pack:PNGExportFailed', 'Could not export after-cleanRats plot: %s', ME.message);
+    end
 
 %% Save results
 
@@ -1281,12 +1321,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             if options.hertzian
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
                     'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'boolFrictionOn', 'scalMu', 'scalKt');
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         else
             matPositions = [vecPosX, vecPosY];
@@ -1297,12 +1337,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             if options.hertzian
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                    'scalPackingFraction', 'scalPackingFractionFull', 'matEigenVectors', 'matEigenValues', ...
+                    'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues', ...
                     'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                    'scalPackingFraction', 'scalPackingFractionFull', 'matEigenVectors', 'matEigenValues', 'boolFrictionOn', 'scalMu', 'scalKt');
+                    'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         end
     else
@@ -1310,23 +1350,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             if options.hertzian
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
                     'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'boolFrictionOn', 'scalMu', 'scalKt');
+                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         else
             if options.hertzian
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
                     'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
             else
                 save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
                     'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'boolFrictionOn', 'scalMu', 'scalKt');
+                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
             end
         end
     end
