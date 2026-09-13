@@ -1467,6 +1467,10 @@ function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNe
             for idxCellZ = 1:scalNumCellsZ
 
                 % wrap the cells
+                % MUDSUCK : if there is only 2 Cells per axis, then the same cell will appear twince
+                % after wraped.
+                % example: cellIndex = [1,2], so 2's neighbors  will be [1,2(this cell), 1]
+                % which will double -count neighbors for each particles.
                 scalCellLeft  = mod(idxCellX-2, scalNumCellsX)+1;
                 scalCellRight = mod(idxCellX,   scalNumCellsX)+1;
                 scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;

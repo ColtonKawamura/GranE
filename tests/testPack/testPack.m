@@ -1,6 +1,6 @@
 % this tests the pack.m function
 % matlab should be cd into ~/repos/ in order to run with:
-% run("GranE/tests/test-pack/test-pack.m")
+% run("GranE/tests/testPack/testPack.m")
 
 clear all
 
@@ -20,9 +20,9 @@ boolCalcEig = false;
 %% without friction
 
 % ----------------- 2D frictionless test -----------------
-pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'GranE/tests/test-pack/data/')
+pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
-foo = load("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
+foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
     sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
@@ -34,16 +34,16 @@ assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
 
 scal2DPackFrac = foo.scalPackingFraction;
 clear foo
-delete("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
-% delete("GranE/tests/test-pack/data/*.png");
+delete("data/2D_N100_P0.001_Width10_Seed1.mat");
+% delete("GranE/tests/testPack/data/*.png");
 
 % ----------------- 3D frictionless test -----------------
 scalNumParts = 6^3;
 scalZMult = 1;
-pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'GranE/tests/test-pack/data/')
+pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
 
-foo = load("GranE/tests/test-pack/data/3D_N216_P0.001_Width6_Seed1.mat");
+foo = load("data/3D_N216_P0.001_Width6_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
     sprintf('3D scalPackingFraction = %.4f, expected between 0.55 and 0.65', ...
@@ -53,8 +53,8 @@ assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
 %     sprintf('3D mean coordination number = %.4f, expected between 5.5 and 6.5', ...
 %             foo.scalMeanCoordNum));
 
-delete("GranE/tests/test-pack/data/3D_N216_P0.001_Width6_Seed1.mat");
-% delete("GranE/tests/test-pack/data/*.png");
+delete("data/3D_N216_P0.001_Width6_Seed1.mat");
+% delete("GranE/tests/testPack/data/*.png");
 clear foo
 
 %% with friction
@@ -70,9 +70,9 @@ opts.saveFrictionalState  = true;   % export fricState sidecar for K^fric
 scalNumParts = 10^2;
 scalZMult = 0;
 
-pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'GranE/tests/test-pack/data/', opts)
+pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/', opts)
 
-foo = load("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
+foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 assert(foo.scalPackingFraction < scal2DPackFrac, ...
     sprintf('Expected frictional scalPackingFraction < frictionless (%.4f), got %.4f', ...
@@ -83,7 +83,7 @@ assert(foo.scalPackingFraction < scal2DPackFrac, ...
 %             foo.scalMeanCoordNum));
 
 clear foo
-delete("GranE/tests/test-pack/data/2D_N100_P0.001_Width10_Seed1.mat");
-% delete("GranE/tests/test-pack/data/*.png");
+delete("data/2D_N100_P0.001_Width10_Seed1.mat");
+% delete("GranE/tests/testPack/data/*.png");
 
 disp('pack.m: ALL PASSED');
