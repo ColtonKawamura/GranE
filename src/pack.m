@@ -369,10 +369,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % because for 2D jamming, the maximum number of contacts is 6N.
     % so twice that is a safe upper bound for 2D jamming
     % we're goingt to store pairs like this:
-    % vecPairNN = [1, 1, 2, 3, ...]   <- first particle of each pair
-    % vecPairMM = [2, 3, 3, 4, ...]   <- second particle of each pair
-    vecPairNN = zeros(N*12, 1);  % [N*12 x 1]
-    vecPairMM = zeros(N*12, 1);  % [N*12 x 1]
+    % vecPairIdxSource = [1, 1, 2, 3, ...]   <- first particle of each pair
+    % vecPairIdxDest = [2, 3, 3, 4, ...]   <- second particle of each pair
+    vecPairIdxSource = zeros(N*12, 1);  % [N*12 x 1]
+    vecPairIdxDest = zeros(N*12, 1);  % [N*12 x 1]
     scalMaxPairs = N*12;
 
     fprintf('Starting main integration loop (max %d steps)...\n', scalMaxSteps);
@@ -439,17 +439,17 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % halving the number of force evaluations.
 
         if boolThreeD
-            [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
+            [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
                 cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ, ...
-                vecPairNN, vecPairMM, scalMaxPairs);
+                vecPairIdxSource, vecPairIdxDest, scalMaxPairs);
         else
-            [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
+            [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
                 cellParticleList, scalNumCellsX, scalNumCellsY, ...
-                vecPairNN, vecPairMM, scalMaxPairs);
+                vecPairIdxSource, vecPairIdxDest, scalMaxPairs);
         end
 
-        vecActivePairNN = vecPairNN(1:scalNumPairs);  % [scalNumPairs x 1]
-        vecActivePairMM = vecPairMM(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairNN = vecPairIdxSource(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairMM = vecPairIdxDest(1:scalNumPairs);  % [scalNumPairs x 1]
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Vectorized force evaluation %%%%%%%%%%%
@@ -1455,16 +1455,18 @@ function [vecPosX, vecPosY, vecPosZ, cellParticleList, scalNumCellsX, scalNumCel
     cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ);
 end
 
-function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
+function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
         cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ, ...
-        vecPairNN, vecPairMM, scalMaxPairs)
+        vecPairIdxSource, vecPairIdxDest, scalMaxPairs)
 
     scalNumPairs = 0;
 
+    % go throgh each combination of cells
     for idxCellX = 1:scalNumCellsX
         for idxCellY = 1:scalNumCellsY
             for idxCellZ = 1:scalNumCellsZ
 
+                % wrap the cells
                 scalCellLeft  = mod(idxCellX-2, scalNumCellsX)+1;
                 scalCellRight = mod(idxCellX,   scalNumCellsX)+1;
                 scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
@@ -1472,8 +1474,13 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( .
                 scalCellBack  = mod(idxCellZ-2, scalNumCellsZ)+1;
                 scalCellFront = mod(idxCellZ,   scalNumCellsZ)+1;
 
-                vecCurrentCell = cellParticleList{idxCellX, idxCellY, idxCellZ};
+                % define "this cell" in this loop
+                % vector of  all particles index in this cell
+                vecCurrentCellPartIdx = cellParticleList{idxCellX, idxCellY, idxCellZ};
 
+                % (at this point) a vector that contains the particle index of every 
+                % particle that COULD be a neighbor beacuse it's in a cell that is 
+                % adjacent "this" cell 
                 vecNeighborList = [ ...
                     cellParticleList{scalCellLeft,  scalCellDown, scalCellBack};  ...
                     cellParticleList{scalCellLeft,  scalCellDown, idxCellZ};      ...
@@ -1488,7 +1495,7 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( .
                     cellParticleList{idxCellX,      scalCellDown, idxCellZ};      ...
                     cellParticleList{idxCellX,      scalCellDown, scalCellFront}; ...
                     cellParticleList{idxCellX,      idxCellY,     scalCellBack};  ...
-                    vecCurrentCell;                                                ...
+                    vecCurrentCellPartIdx;                                                ...
                     cellParticleList{idxCellX,      idxCellY,     scalCellFront}; ...
                     cellParticleList{idxCellX,      scalCellUp,   scalCellBack};  ...
                     cellParticleList{idxCellX,      scalCellUp,   idxCellZ};      ...
@@ -1503,17 +1510,37 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( .
                     cellParticleList{scalCellRight, scalCellUp,   idxCellZ};      ...
                     cellParticleList{scalCellRight, scalCellUp,   scalCellFront}];
 
-                for idxNN = vecCurrentCell'
-                    vecCandidates = vecNeighborList(vecNeighborList > idxNN);
-                    scalNumCandidates = numel(vecCandidates);
+                % go through every particle index in this cell
+                for idxNN = vecCurrentCellPartIdx'
+
+                    % pick out only the index of particles that are greater than this one
+                    % prevents from counting contact twince
+                    vecContactCandidatePartIdx = vecNeighborList(vecNeighborList > idxNN);
+                    scalNumCandidates = numel(vecContactCandidatePartIdx);
                     if scalNumCandidates == 0; continue; end
+
+                    % expand in case we undercounted contacts (see intialization of
+                    % these vectors at the begging of the file
+                    % I don't think this should ever happen
                     if scalNumPairs + scalNumCandidates > scalMaxPairs
                         scalMaxPairs = 2 * scalMaxPairs;
-                        vecPairNN(scalMaxPairs) = 0;
-                        vecPairMM(scalMaxPairs) = 0;
+                        vecPairIdxSource(scalMaxPairs) = 0;
+                        vecPairIdxDest(scalMaxPairs) = 0;
                     end
-                    vecPairNN(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
-                    vecPairMM(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecCandidates;
+
+                    % for each pair, set the source particle index
+                    % example: 
+                    % vecPairIdxSource(1:3) = [5; 5; 5];
+                    vecPairIdxSource(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
+
+                    % set the destination:
+                    % example:
+                    % vecPairIdxDest(1:3)   = [9; 10; 12];
+                    vecPairIdxDest(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecContactCandidatePartIdx;
+
+                    % example contacts: (5,9), (5,10,) (5, 12)
+
+
                     scalNumPairs = scalNumPairs + scalNumCandidates;
                 end
             end
@@ -1521,9 +1548,9 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors3D( .
     end
 end
 
-function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
+function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
         cellParticleList, scalNumCellsX, scalNumCellsY, ...
-        vecPairNN, vecPairMM, scalMaxPairs)
+        vecPairIdxSource, vecPairIdxDest, scalMaxPairs)
 
     scalNumPairs = 0;
 
@@ -1535,30 +1562,30 @@ function [vecPairNN, vecPairMM, scalNumPairs, scalMaxPairs] = findNeighbors2D( .
             scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
             scalCellUp    = mod(idxCellY,   scalNumCellsY)+1;
 
-            vecCurrentCell = cellParticleList{idxCellX, idxCellY};
+            vecCurrentCellPartIdx = cellParticleList{idxCellX, idxCellY};
 
             vecNeighborList = [ ...
                 cellParticleList{scalCellLeft,  scalCellDown}; ...
                 cellParticleList{scalCellLeft,  idxCellY};     ...
                 cellParticleList{scalCellLeft,  scalCellUp};   ...
                 cellParticleList{idxCellX,      scalCellDown}; ...
-                vecCurrentCell;                                ...
+                vecCurrentCellPartIdx;                                ...
                 cellParticleList{idxCellX,      scalCellUp};   ...
                 cellParticleList{scalCellRight, scalCellDown}; ...
                 cellParticleList{scalCellRight, idxCellY};     ...
                 cellParticleList{scalCellRight, scalCellUp}];
 
-            for idxNN = vecCurrentCell'
-                vecCandidates = vecNeighborList(vecNeighborList > idxNN);
-                scalNumCandidates = numel(vecCandidates);
+            for idxNN = vecCurrentCellPartIdx'
+                vecContactCandidatePartIdx = vecNeighborList(vecNeighborList > idxNN);
+                scalNumCandidates = numel(vecContactCandidatePartIdx);
                 if scalNumCandidates == 0; continue; end
                 if scalNumPairs + scalNumCandidates > scalMaxPairs
                     scalMaxPairs = 2 * scalMaxPairs;
-                    vecPairNN(scalMaxPairs) = 0;
-                    vecPairMM(scalMaxPairs) = 0;
+                    vecPairIdxSource(scalMaxPairs) = 0;
+                    vecPairIdxDest(scalMaxPairs) = 0;
                 end
-                vecPairNN(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
-                vecPairMM(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecCandidates;
+                vecPairIdxSource(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
+                vecPairIdxDest(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecContactCandidatePartIdx;
                 scalNumPairs = scalNumPairs + scalNumCandidates;
             end
         end
