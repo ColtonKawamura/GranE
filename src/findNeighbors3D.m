@@ -68,35 +68,36 @@ function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNe
                 % ----------------------------- END WRONG ----------------------------
 
                 % --- Build unique neighbor-cell list (3D periodic) ---
-                % 3x3x3 stencil: all (dX,dY,dZ) in {-1,0,1} around this cell.
+                % 3x3x3 stencil: all (scalIdxOffsetX,scalIdxOffsetY,scalIdxOffsetZ) in {-1,0,1} around this cell.
                 % Use mod(...) to wrap, then unique(...,'rows') to remove
                 % duplicate (ix,iy,iz) triplets that occur when scalNumCells
                 % is small (e.g. 2 per axis).
-                matNeighborCells = zeros(27, 3);
-                idxNeighbor = 0;
-                for dX = -1:1
-                    for dY = -1:1
-                        for dZ = -1:1
-                            idxNeighbor = idxNeighbor + 1;
-                            ix = mod(idxCellX - 1 + dX, scalNumCellsX) + 1;
-                            iy = mod(idxCellY - 1 + dY, scalNumCellsY) + 1;
-                            iz = mod(idxCellZ - 1 + dZ, scalNumCellsZ) + 1;
-                            matNeighborCells(idxNeighbor, :) = [ix, iy, iz];
+                matIdxNeighborCells = zeros(27, 3); % each row is a neighbor cell [ix, iy,  iz] 
+                idxNeighbor = 0; % start at zero, and increment each loop. After [-1, 0, +1] times will be 27 (all cells inclusive)
+                for scalIdxOffsetX = -1:1
+                    for scalIdxOffsetY = -1:1
+                        for scalIdxOffsetZ = -1:1
+                            idxNeighbor = idxNeighbor + 1; % increments the row. each row = neighbor cell
+                            ix = mod(idxCellX - 1 + scalIdxOffsetX, scalNumCellsX) + 1;
+                            iy = mod(idxCellY - 1 + scalIdxOffsetY, scalNumCellsY) + 1;
+                            iz = mod(idxCellZ - 1 + scalIdxOffsetZ, scalNumCellsZ) + 1;
+                            matIdxNeighborCells(idxNeighbor, :) = [ix, iy, iz];
                         end
                     end
                 end
+
                 % Remove duplicate neighbor cells (same [ix,iy,iz])
-                matNeighborCells = unique(matNeighborCells, 'rows');
+                matIdxNeighborCells = unique(matIdxNeighborCells, 'rows');
 
                 % Particles in the current cell
                 vecCurrentCellPartIdx = cellParticleList{idxCellX, idxCellY, idxCellZ};
 
-                % Build neighbor particle list by concatenating each unique cell
+                % Build neighbor particle (not nessearily contacts) list by concatenating each unique cell
                 vecNeighborList = [];
-                for k = 1:size(matNeighborCells, 1)
-                    ix = matNeighborCells(k, 1);
-                    iy = matNeighborCells(k, 2);
-                    iz = matNeighborCells(k, 3);
+                for k = 1:size(matIdxNeighborCells, 1)
+                    ix = matIdxNeighborCells(k, 1);
+                    iy = matIdxNeighborCells(k, 2);
+                    iz = matIdxNeighborCells(k, 3);
                     vecNeighborList = [vecNeighborList; cellParticleList{ix, iy, iz}];
                 end
 
