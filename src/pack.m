@@ -470,24 +470,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 vecPairIdxSource, vecPairIdxDest, scalMaxPairs);
         end
 
-        vecActivePairNN = vecPairIdxSource(1:scalNumPairs);  % [scalNumPairs x 1]
-        vecActivePairMM = vecPairIdxDest(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairSource = vecPairIdxSource(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairDest = vecPairIdxDest(1:scalNumPairs);  % [scalNumPairs x 1]
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Vectorized force evaluation %%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % All arithmetic operates on [scalNumPairs x 1] vectors — no inner loops.
         % no mod() here because we need signed distances
-        vecSepX = vecPosX(vecActivePairMM) - vecPosX(vecActivePairNN);
+        vecSepX = vecPosX(vecActivePairDest) - vecPosX(vecActivePairSource);
         vecSepX = vecSepX - scalBoxWidthX  * round(vecSepX / scalBoxWidthX);
-        vecSepY = vecPosY(vecActivePairMM) - vecPosY(vecActivePairNN);
+        vecSepY = vecPosY(vecActivePairDest) - vecPosY(vecActivePairSource);
         vecSepY = vecSepY - scalBoxHeightY * round(vecSepY / scalBoxHeightY);
         if boolThreeD
-            vecSepZ = vecPosZ(vecActivePairMM) - vecPosZ(vecActivePairNN);
+            vecSepZ = vecPosZ(vecActivePairDest) - vecPosZ(vecActivePairSource);
             vecSepZ = vecSepZ - scalBoxDepthZ * round(vecSepZ / scalBoxDepthZ);
         end
 
-        vecContactDist = matContactDist(vecActivePairNN + N*(vecActivePairMM-1));
+        vecContactDist = matContactDist(vecActivePairSource + N*(vecActivePairDest-1));
 
         if boolThreeD
             vecSepDistSq = vecSepX.^2 + vecSepY.^2 + vecSepZ.^2;
@@ -506,8 +506,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
         vecSepDistSq = vecSepDistSq(boolContact); % [scalNumContacts x 1]
         vecContactDist = vecContactDist(boolContact); % [scalNumContacts x 1]
-        vecContactNN = vecActivePairNN(boolContact);% [scalNumContacts x 1]
-        vecContactMM = vecActivePairMM(boolContact);% [scalNumContacts x 1]
+        vecContactNN = vecActivePairSource(boolContact);% [scalNumContacts x 1]
+        vecContactMM = vecActivePairDest(boolContact);% [scalNumContacts x 1]
 
         if options.hertzian
             vecRadiiNN = vecRadii(vecContactNN); % [scalNumContacts x 1]
@@ -647,7 +647,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % pairs can become contacts on the next step, so resetting just those
         % (O(pairs)) is sufficient.
         if boolFrictionOn && ~boolThreeD
-            vecSeparating = vecActivePairNN(~boolContact) + N * (vecActivePairMM(~boolContact) - 1);
+            vecSeparating = vecActivePairSource(~boolContact) + N * (vecActivePairDest(~boolContact) - 1);
             if ~isempty(vecSeparating)
                 matDispTan(vecSeparating) = 0;
                 matDispTanStuck(vecSeparating) = false;
