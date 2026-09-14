@@ -297,7 +297,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % Determine cell size rounded to be at least 1*G*D
     % to avoid missing interactions, I tried this out 
     % many times and 3 works best
-    scalRawCellWidth = 3 * G * D;
+    scalRawCellWidth = 3 * G * D; % Changing this will mess up findNeighbors2D. Update findNeighbors2D to be like 3D version (so it doesn't double count neighbors) before changing this.
 
     % Divide the box into integer number of cells
     % so that the cell width is a multiple of scalRawCellWidth
@@ -310,6 +310,28 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         scalCellWidthZ = scalBoxDepthZ  / scalNumCellsZ;
     end
 
+    % --- Warn about coarse cell grids (especially 2D double-count edge case) ---
+    if ~boolThreeD
+        % 2D: old findNeighbors2D logic will double-count neighbors when an axis has 2 cells
+        if scalNumCellsX == 2 || scalNumCellsY == 2
+            warning('GranE:CellGridTwoCells2D', ...
+                ['Cell grid has only 2 cells along at least one axis: ', ...
+                 'scalNumCellsX = %d, scalNumCellsY = %d. ', ...
+                 'Current findNeighbors2D will double-count neighbor pairs in this regime. ', ...
+                 'Consider updating findNeighbors2D to the 3D-style stencil before using this setup.'], ...
+                 scalNumCellsX, scalNumCellsY);
+        end
+    else
+        % 3D: this is now handled correctly by findNeighbors3D + unique(...,'rows'),
+        % but you might still want a "coarse grid" warning if any axis has only 1-2 cells.
+        if scalNumCellsX <= 2 || scalNumCellsY <= 2 || scalNumCellsZ <= 2
+            warning('GranE:CellGridCoarse3D', ...
+                ['Cell grid is very coarse in 3D: scalNumCells = [%d %d %d]. ', ...
+                 'findNeighbors3D will still be correct, but performance/contact statistics ', ...
+                 'may be affected. Consider using more cells per axis if feasible.'], ...
+                 scalNumCellsX, scalNumCellsY, scalNumCellsZ);
+        end
+    end
     % Wrap positions into [0, L) before rebuilding cell list
     % mod(x, L) == x - L*floor(x/L), handles both positive and negative overshoot
     vecPosX = mod(vecPosX, scalBoxWidthX);   % [N x 1]
@@ -448,24 +470,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 vecPairIdxSource, vecPairIdxDest, scalMaxPairs);
         end
 
-        vecActivePairNN = vecPairIdxSource(1:scalNumPairs);  % [scalNumPairs x 1]
-        vecActivePairMM = vecPairIdxDest(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairSource = vecPairIdxSource(1:scalNumPairs);  % [scalNumPairs x 1]
+        vecActivePairDest = vecPairIdxDest(1:scalNumPairs);  % [scalNumPairs x 1]
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Vectorized force evaluation %%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         % All arithmetic operates on [scalNumPairs x 1] vectors — no inner loops.
         % no mod() here because we need signed distances
-        vecSepX = vecPosX(vecActivePairMM) - vecPosX(vecActivePairNN);
+        vecSepX = vecPosX(vecActivePairDest) - vecPosX(vecActivePairSource);
         vecSepX = vecSepX - scalBoxWidthX  * round(vecSepX / scalBoxWidthX);
-        vecSepY = vecPosY(vecActivePairMM) - vecPosY(vecActivePairNN);
+        vecSepY = vecPosY(vecActivePairDest) - vecPosY(vecActivePairSource);
         vecSepY = vecSepY - scalBoxHeightY * round(vecSepY / scalBoxHeightY);
         if boolThreeD
-            vecSepZ = vecPosZ(vecActivePairMM) - vecPosZ(vecActivePairNN);
+            vecSepZ = vecPosZ(vecActivePairDest) - vecPosZ(vecActivePairSource);
             vecSepZ = vecSepZ - scalBoxDepthZ * round(vecSepZ / scalBoxDepthZ);
         end
 
-        vecContactDist = matContactDist(vecActivePairNN + N*(vecActivePairMM-1));
+        vecContactDist = matContactDist(vecActivePairSource + N*(vecActivePairDest-1));
 
         if boolThreeD
             vecSepDistSq = vecSepX.^2 + vecSepY.^2 + vecSepZ.^2;
@@ -484,8 +506,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
         vecSepDistSq = vecSepDistSq(boolContact); % [scalNumContacts x 1]
         vecContactDist = vecContactDist(boolContact); % [scalNumContacts x 1]
-        vecContactNN = vecActivePairNN(boolContact);% [scalNumContacts x 1]
-        vecContactMM = vecActivePairMM(boolContact);% [scalNumContacts x 1]
+        vecContactNN = vecActivePairSource(boolContact);% [scalNumContacts x 1]
+        vecContactMM = vecActivePairDest(boolContact);% [scalNumContacts x 1]
 
         if options.hertzian
             vecRadiiNN = vecRadii(vecContactNN); % [scalNumContacts x 1]
@@ -625,7 +647,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % pairs can become contacts on the next step, so resetting just those
         % (O(pairs)) is sufficient.
         if boolFrictionOn && ~boolThreeD
-            vecSeparating = vecActivePairNN(~boolContact) + N * (vecActivePairMM(~boolContact) - 1);
+            vecSeparating = vecActivePairSource(~boolContact) + N * (vecActivePairDest(~boolContact) - 1);
             if ~isempty(vecSeparating)
                 matDispTan(vecSeparating) = 0;
                 matDispTanStuck(vecSeparating) = false;
@@ -1420,137 +1442,6 @@ function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ..
 
 end
 
-function [vecPosX, vecPosY, vecPosZ, cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ] = ...
-        rebuildCellList3D(vecPosX, vecPosY, vecPosZ, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ, scalRawCellWidth, scalTimestep, N)
-
-    scalNumCellsX  = round(scalBoxWidthX  / scalRawCellWidth);
-    scalCellWidthX = scalBoxWidthX  / scalNumCellsX;
-    scalNumCellsY  = round(scalBoxHeightY / scalRawCellWidth);
-    scalCellWidthY = scalBoxHeightY / scalNumCellsY;
-    scalNumCellsZ  = round(scalBoxDepthZ  / scalRawCellWidth);
-    scalCellWidthZ = scalBoxDepthZ  / scalNumCellsZ;
-
-    % Sanity check
-    vecFloorX = floor(vecPosX / scalBoxWidthX);
-    vecFloorY = floor(vecPosY / scalBoxHeightY);
-    vecFloorZ = floor(vecPosZ / scalBoxDepthZ);
-    if any(abs(vecFloorX) > 1) || any(abs(vecFloorY) > 1) || any(abs(vecFloorZ) > 1)
-        error(['Particle moved more than one box length in a single timestep.\n' ...
-               'Reduce scalTimestep (currently %.4e).'], scalTimestep);
-    end
-
-    % Wrap into [0, L)
-    vecPosX = mod(vecPosX, scalBoxWidthX);
-    vecPosY = mod(vecPosY, scalBoxHeightY);
-    vecPosZ = mod(vecPosZ, scalBoxDepthZ);
-
-    % Map to cell indices
-    vecCellIdxX = min(max(ceil(vecPosX / scalCellWidthX), 1), scalNumCellsX);
-    vecCellIdxY = min(max(ceil(vecPosY / scalCellWidthY), 1), scalNumCellsY);
-    vecCellIdxZ = min(max(ceil(vecPosZ / scalCellWidthZ), 1), scalNumCellsZ);
-
-    % Linear index: x + Nx*(y-1) + Nx*Ny*(z-1)
-    vecCellLinearIdx = vecCellIdxX + scalNumCellsX*(vecCellIdxY-1) + scalNumCellsX*scalNumCellsY*(vecCellIdxZ-1);
-    cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY*scalNumCellsZ 1], @(x){x});
-    cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ);
-end
-
-function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors3D( ...
-        cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ, ...
-        vecPairIdxSource, vecPairIdxDest, scalMaxPairs)
-
-    scalNumPairs = 0;
-
-    % go throgh each combination of cells
-    for idxCellX = 1:scalNumCellsX
-        for idxCellY = 1:scalNumCellsY
-            for idxCellZ = 1:scalNumCellsZ
-
-                % wrap the cells
-                % MUDSUCK : if there is only 2 Cells per axis, then the same cell will appear twince
-                % after wraped.
-                % example: cellIndex = [1,2], so 2's neighbors  will be [1,2(this cell), 1]
-                % which will double -count neighbors for each particles.
-                scalCellLeft  = mod(idxCellX-2, scalNumCellsX)+1;
-                scalCellRight = mod(idxCellX,   scalNumCellsX)+1;
-                scalCellDown  = mod(idxCellY-2, scalNumCellsY)+1;
-                scalCellUp    = mod(idxCellY,   scalNumCellsY)+1;
-                scalCellBack  = mod(idxCellZ-2, scalNumCellsZ)+1;
-                scalCellFront = mod(idxCellZ,   scalNumCellsZ)+1;
-
-                % define "this cell" in this loop
-                % vector of  all particles index in this cell
-                vecCurrentCellPartIdx = cellParticleList{idxCellX, idxCellY, idxCellZ};
-
-                % (at this point) a vector that contains the particle index of every 
-                % particle that COULD be a neighbor beacuse it's in a cell that is 
-                % adjacent "this" cell 
-                vecNeighborList = [ ...
-                    cellParticleList{scalCellLeft,  scalCellDown, scalCellBack};  ...
-                    cellParticleList{scalCellLeft,  scalCellDown, idxCellZ};      ...
-                    cellParticleList{scalCellLeft,  scalCellDown, scalCellFront}; ...
-                    cellParticleList{scalCellLeft,  idxCellY,     scalCellBack};  ...
-                    cellParticleList{scalCellLeft,  idxCellY,     idxCellZ};      ...
-                    cellParticleList{scalCellLeft,  idxCellY,     scalCellFront}; ...
-                    cellParticleList{scalCellLeft,  scalCellUp,   scalCellBack};  ...
-                    cellParticleList{scalCellLeft,  scalCellUp,   idxCellZ};      ...
-                    cellParticleList{scalCellLeft,  scalCellUp,   scalCellFront}; ...
-                    cellParticleList{idxCellX,      scalCellDown, scalCellBack};  ...
-                    cellParticleList{idxCellX,      scalCellDown, idxCellZ};      ...
-                    cellParticleList{idxCellX,      scalCellDown, scalCellFront}; ...
-                    cellParticleList{idxCellX,      idxCellY,     scalCellBack};  ...
-                    vecCurrentCellPartIdx;                                                ...
-                    cellParticleList{idxCellX,      idxCellY,     scalCellFront}; ...
-                    cellParticleList{idxCellX,      scalCellUp,   scalCellBack};  ...
-                    cellParticleList{idxCellX,      scalCellUp,   idxCellZ};      ...
-                    cellParticleList{idxCellX,      scalCellUp,   scalCellFront}; ...
-                    cellParticleList{scalCellRight, scalCellDown, scalCellBack};  ...
-                    cellParticleList{scalCellRight, scalCellDown, idxCellZ};      ...
-                    cellParticleList{scalCellRight, scalCellDown, scalCellFront}; ...
-                    cellParticleList{scalCellRight, idxCellY,     scalCellBack};  ...
-                    cellParticleList{scalCellRight, idxCellY,     idxCellZ};      ...
-                    cellParticleList{scalCellRight, idxCellY,     scalCellFront}; ...
-                    cellParticleList{scalCellRight, scalCellUp,   scalCellBack};  ...
-                    cellParticleList{scalCellRight, scalCellUp,   idxCellZ};      ...
-                    cellParticleList{scalCellRight, scalCellUp,   scalCellFront}];
-
-                % go through every particle index in this cell
-                for idxNN = vecCurrentCellPartIdx'
-
-                    % pick out only the index of particles that are greater than this one
-                    % prevents from counting contact twince
-                    vecContactCandidatePartIdx = vecNeighborList(vecNeighborList > idxNN);
-                    scalNumCandidates = numel(vecContactCandidatePartIdx);
-                    if scalNumCandidates == 0; continue; end
-
-                    % expand in case we undercounted contacts (see intialization of
-                    % these vectors at the begging of the file
-                    % I don't think this should ever happen
-                    if scalNumPairs + scalNumCandidates > scalMaxPairs
-                        scalMaxPairs = 2 * scalMaxPairs;
-                        vecPairIdxSource(scalMaxPairs) = 0;
-                        vecPairIdxDest(scalMaxPairs) = 0;
-                    end
-
-                    % for each pair, set the source particle index
-                    % example: 
-                    % vecPairIdxSource(1:3) = [5; 5; 5];
-                    vecPairIdxSource(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = idxNN;
-
-                    % set the destination:
-                    % example:
-                    % vecPairIdxDest(1:3)   = [9; 10; 12];
-                    vecPairIdxDest(scalNumPairs+1 : scalNumPairs+scalNumCandidates) = vecContactCandidatePartIdx;
-
-                    % example contacts: (5,9), (5,10,) (5, 12)
-
-
-                    scalNumPairs = scalNumPairs + scalNumCandidates;
-                end
-            end
-        end
-    end
-end
 
 function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNeighbors2D( ...
         cellParticleList, scalNumCellsX, scalNumCellsY, ...

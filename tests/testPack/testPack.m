@@ -4,7 +4,12 @@
 
 clear all
 
+% ---- test findNeighbors3D.m first
 
+run("testFindNeighbors3D.m") % testFindNeighbors3D.m shoudl sit next to this test
+
+
+% ----------------- 2D frictionless test -----------------
 scalNumParts = 100;
 scalSpringConstant = 100;
 scalDiamSmall = 1;
@@ -18,11 +23,10 @@ scalZMult = 0;
 boolCalcEig = false;
 
 %% without friction
-
-% ----------------- 2D frictionless test -----------------
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
 foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
+delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
     sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
@@ -34,7 +38,6 @@ assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
 
 scal2DPackFrac = foo.scalPackingFraction;
 clear foo
-delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 % delete("GranE/tests/testPack/data/*.png");
 
 % ----------------- 3D frictionless test -----------------
@@ -44,6 +47,7 @@ pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, sca
 
 
 foo = load("data/3D_N216_P0.001_Width6_Seed1.mat");
+delete("data/3D_N216_P0.001_Width6_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
     sprintf('3D scalPackingFraction = %.4f, expected between 0.55 and 0.65', ...
@@ -53,7 +57,6 @@ assert(foo.scalPackingFraction > 0.55 && foo.scalPackingFraction < 0.65, ...
 %     sprintf('3D mean coordination number = %.4f, expected between 5.5 and 6.5', ...
 %             foo.scalMeanCoordNum));
 
-delete("data/3D_N216_P0.001_Width6_Seed1.mat");
 % delete("GranE/tests/testPack/data/*.png");
 clear foo
 
@@ -73,6 +76,7 @@ scalZMult = 0;
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/', opts)
 
 foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
+delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 assert(foo.scalPackingFraction < scal2DPackFrac, ...
     sprintf('Expected frictional scalPackingFraction < frictionless (%.4f), got %.4f', ...
@@ -83,7 +87,6 @@ assert(foo.scalPackingFraction < scal2DPackFrac, ...
 %             foo.scalMeanCoordNum));
 
 clear foo
-delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 % delete("GranE/tests/testPack/data/*.png");
 
 disp('pack.m: ALL PASSED');
