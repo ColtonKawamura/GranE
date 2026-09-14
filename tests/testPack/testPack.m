@@ -4,7 +4,12 @@
 
 clear all
 
+% ---- test findNeighbors3D.m first
 
+run("testFindNeighbors3D.m") % testFindNeighbors3D.m shoudl sit next to this test
+
+
+% ----------------- 2D frictionless test -----------------
 scalNumParts = 100;
 scalSpringConstant = 100;
 scalDiamSmall = 1;
@@ -18,8 +23,6 @@ scalZMult = 0;
 boolCalcEig = false;
 
 %% without friction
-
-% ----------------- 2D frictionless test -----------------
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
 foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
