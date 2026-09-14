@@ -55,8 +55,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % check to see if 3d path is needed
     boolThreeD = (z_mult ~= 0);
 
-            %% Guard: Cundall-Strack friction is implemented for 2D packings only.
-            %% 3D friction (rotation about 3 axes) requires a different model.
+    %% Guard: Cundall-Strack friction is implemented for 2D packings only.
+    %% 3D friction (rotation about 3 axes) requires a different model.
     if boolThreeD && options.flagFrictionOn
         error('pack:Friction3DNotSupported', 'flagFrictionOn = true is 2D only.');
     end
@@ -128,16 +128,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalCompressionRate = P_target;
     %% Frictional (Cundall-Strack) compression protocol — 2D only.
     %%
-    %% The OLD criterion (accept when |P-P_target|/P_target < 15% for 200 steps,
-    %% or when the box happens to stop moving) is NOT a convergence criterion:
-    %% the pressure estimate P = sqrt(2*Ep/K) is an instantaneous
-    %% overlap-energy proxy that spikes and collapses, so the dead-band fires
-    %% on a transient and the "frozen box" merely means the box paused between
-    %% moves. The packing was accepted at mean coordination Zn ~ 1.2 (loose
-    %% clump; frictional isostaticity is Zn ~ 3) with per-particle unbalanced
-    %% force ~ 70% of the mean contact force — not jammed.
     %%
-    %% Correct protocol (literature: OverDamp.cpp's Acc_max < Fthresh, Vinutha
+    %%  Protocol (literature: OverDamp.cpp's Acc_max < Fthresh, Vinutha
     %% & Sastry DEM relaxation "<|F_tot|> < threshold", Silbert et al. pressure-
     %% controlled compression): drive the box only while P is outside a dead-band
     %% around P_target (compress when loose, expand when dense), HOLD the box
@@ -267,10 +259,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     if boolThreeD
         vecAccelZPrev = zeros(N, 1);  % [N x 1]
     end
-             %% Rotational DOFs for 2D disks (out-of-plane z rotation)
-            %%   vecOmega        = angular velocity omega_i [N x 1]
-            %%   vecAlphaPrev    = previous angular acceleration, Verlet half-step.
-            %%   Solid disk: I_i = (M_i * r_i^2) / 2,  alpha = torque / I
+
+    %% Rotational DOFs for 2D disks (out-of-plane z rotation)
+    %%   vecOmega        = angular velocity omega_i [N x 1]
+    %%   vecAlphaPrev    = previous angular acceleration, Verlet half-step.
+    %%   Solid disk: I_i = (M_i * r_i^2) / 2,  alpha = torque / I
     if boolFrictionOn
         vecOmega       = zeros(N, 1);
         vecAlphaPrev   = zeros(N, 1);
