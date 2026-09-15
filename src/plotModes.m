@@ -17,6 +17,16 @@ function plotModes(resultsDir, avg_mass, options)
     %   options.scalPressure = 0.25;             % multiply y by P^0.25
     %                                            % (0 or empty -> no scaling)
     %
+    % Optional coordination-number scaling row:
+    %   options.flagCoordNumRow = true;         % add a 3rd row whose y is the
+    %                                            % (beta/gamma) ratio normalized by
+    %                                            % the packing's mean coordination
+    %                                            % number (scalMeanCoordNum). Default
+    %                                            % OFF; if the saved packing lacks
+    %                                            % scalMeanCoordNum it is recomputed
+    %                                            % from the saved positions, exactly
+    %                                            % as pack.m does.
+    %
     % Example:
     %   plotModes('3dUniformMass/', 1.0);
     %
@@ -105,6 +115,13 @@ function plotModes(resultsDir, avg_mass, options)
         scalPressure = 0;
     end
 
+    % Third row: additionally normalize y by the packing's mean coordination
+    % number (scalMeanCoordNum). Default off.
+    flagCoordNumRow = logical(getfield_or_empty(options,'flagCoordNumRow'));
+    if isempty(flagCoordNumRow)
+        flagCoordNumRow = false;
+    end
+
     gamma_vals = selectClosest(allGamma, argGamma);    % columns in tiledlayout
     P_list     = selectClosest(allP,     argPressure);
     N_list     = selectClosest(allN,     argN);
@@ -119,8 +136,9 @@ function plotModes(resultsDir, avg_mass, options)
 
     numGamma = numel(gamma_vals);
 
+    numRows = 2 + flagCoordNumRow;
     fig = figure;
-    t = tiledlayout(2,numGamma,'TileSpacing','tight','Padding','tight'); %#ok<NASGU>
+    t = tiledlayout(numRows,numGamma,'TileSpacing','tight','Padding','tight'); %#ok<NASGU>
 
     if curr_version(2) ~= '3'
         theme(fig,'light');
@@ -142,6 +160,11 @@ function plotModes(resultsDir, avg_mass, options)
         % Generic exponent, e.g. P^0.3
         yLabelStr = ['$\left(\hat{\beta}_i/\hat{\gamma}\right)\hat{P}^{' num2str(scalPressure) '}$'];
     end
+
+    % Y-label for the coordination-number-normalized (third) row: the same
+    % quantity as yLabelStr, divided by the mean coordination number z-bar
+    % (kept inside one math span).
+    zLabelStr = [yLabelStr(1:end-1) ' / \bar{z}$'];
 
     %--------------------------------------------------------------
     % Loop over gamma columns
@@ -175,6 +198,21 @@ function plotModes(resultsDir, avg_mass, options)
             'Box','on')
 
         grid(ax2,'on')
+
+        %----------------------------------------------------------
+        % THIRD ROW: y additionally normalized by the packing's mean
+        % coordination number (only when the option is enabled)
+        %----------------------------------------------------------
+        ax3 = [];
+        if flagCoordNumRow
+            ax3 = nexttile(2*numGamma + gidx);
+            hold(ax3,'on')
+            set(ax3,...
+                'XScale','log',...
+                'YScale','log',...
+                'Box','on')
+            grid(ax3,'on')
+        end
 
         %----------------------------------------------------------
         % Loop over all files and plot those matching this gamma
@@ -211,9 +249,13 @@ function plotModes(resultsDir, avg_mass, options)
             eigvals = results.eigenvalues;
 
             % Color from pressure
-            P_color_val = ...
-                (log10(m.P) - log10(minP)) / ...
-                (log10(maxP) - log10(minP));
+            pDenom = log10(maxP) - log10(minP);
+            if pDenom == 0 || ~isfinite(pDenom)
+                % Single (or degenerate) pressure: no color ramp to span.
+                P_color_val = 0.5;
+            else
+                P_color_val = (log10(m.P) - log10(minP)) / pDenom;
+            end
             P_color = [P_color_val, 0, 1-P_color_val];
 
             % Symbol from N
@@ -252,6 +294,26 @@ function plotModes(resultsDir, avg_mass, options)
                 yval,...
                 SYM,...
                 'Color',P_color)
+
+            %------------------------------------------------------
+            % Third row: same reduced-frequency x, y additionally
+            % normalized by the packing's mean coordination number.
+            % If scalMeanCoordNum is not saved with the packing, it is
+            % recomputed from the saved positions, exactly as pack.m does.
+            %------------------------------------------------------
+            if flagCoordNumRow
+                Zn = getfield_or_empty(results.packing,'scalMeanCoordNum');
+                if isempty(Zn) || ~isfinite(Zn) || Zn <= 0
+                    Zn = computeMeanCoordNum(results.packing);
+                end
+                if isfinite(Zn) && Zn > 0
+                    loglog(ax3,...
+                        w*sqrt(avg_mass)/sqrt(m.P),...
+                        yval / Zn,...
+                        SYM,...
+                        'Color',P_color)
+                end
+            end
 
         end
 
@@ -341,6 +403,32 @@ function plotModes(resultsDir, avg_mass, options)
 
         end
 
+        %==========================================================
+        % THIRD ROW FORMATTING (coordination-number normalized)
+        %==========================================================
+        if flagCoordNumRow
+            xlim(ax3,[3e-2 100])
+            ylim(ax3,[3e-3 10])
+
+            plot(ax3,[3e-2 1],[3e-2 1].^2,'k-')
+
+            set(ax3,'XTick',10.^(-3:2))
+
+            xlabel(ax3,...
+                '$\hat{\omega}_i/\hat{\omega}_c$',...
+                'FontSize',AxisFontSize,...
+                'Interpreter','latex')
+
+            if gidx == 1
+                ylabel(ax3,...
+                    zLabelStr,...
+                    'FontSize',AxisFontSize,...
+                    'Interpreter','latex')
+            else
+                ax3.YTickLabel = [];
+            end
+        end
+
     end
 
 end
@@ -368,5 +456,70 @@ function val = getfield_or_empty(s, fieldname)
     else
         val = [];
     end
+end
+
+function Zn = computeMeanCoordNum(packing)
+    % computeMeanCoordNum(packing) -- mean particle-particle coordination
+    % number (Zn) of a saved packing, recomputed from its positions.
+    %
+    % Mirrors pack.m: vecCoordNum is the per-particle count of OTHER
+    % particles overlapping under the periodic minimum-image distance
+    % (r_ij < r_i + r_j), and scalMeanCoordNum = mean(vecCoordNum). Wall
+    % contacts are NOT counted (pack.m's vecCoordNum excludes them).
+    %
+    % Results files store the packing in one of two schemas, both handled:
+    %   3D: vecPosX/vecPosY/vecPosZ (N x 1), vecDiameter (N x 1),
+    %       scalBoxWidthX / scalBoxHeightY / scalBoxDepthZ
+    %   2D: x / y / Dn (1 x N), Lx / Ly
+    %
+    % Returns NaN when the required fields are absent so the caller can
+    % fall back (and leave the row blank for that point).
+    if isfield(packing,'vecPosX') && isfield(packing,'vecPosY') && ...
+            isfield(packing,'vecPosZ') && isfield(packing,'vecDiameter')
+        % 3D schema
+        vecX  = packing.vecPosX;
+        vecY  = packing.vecPosY;
+        vecZ  = packing.vecPosZ;
+        vecD  = packing.vecDiameter;
+        Lx    = packing.scalBoxWidthX;
+        Ly    = packing.scalBoxHeightY;
+        Lz    = packing.scalBoxDepthZ;
+        bool3D = true;
+    elseif isfield(packing,'x') && isfield(packing,'y') && isfield(packing,'Dn')
+        % 2D schema
+        vecX  = packing.x(:);
+        vecY  = packing.y(:);
+        vecD  = packing.Dn(:);
+        Lx    = packing.Lx;
+        Ly    = packing.Ly;
+        bool3D = false;
+    else
+        Zn = NaN;
+        return;
+    end
+
+    N = numel(vecX);
+    if N < 2 || any(~isfinite([Lx; Ly])) || (bool3D && ~isfinite(Lz))
+        Zn = NaN;
+        return;
+    end
+
+    vecCoordNum = zeros(N, 1);
+    for i = 1:N
+        dx = vecX - vecX(i);
+        dx = dx - Lx * round(dx / Lx);
+        dy = vecY - vecY(i);
+        dy = dy - Ly * round(dy / Ly);
+        if bool3D
+            dz = vecZ - vecZ(i);
+            dz = dz - Lz * round(dz / Lz);
+            r  = sqrt(dx.^2 + dy.^2 + dz.^2);
+        else
+            r  = sqrt(dx.^2 + dy.^2);
+        end
+        rSum = vecD + vecD(i);              % contact distance r_i + r_j
+        vecCoordNum(i) = sum(r < rSum & (1:N)' ~= i);
+    end
+    Zn = mean(vecCoordNum);
 end
 
