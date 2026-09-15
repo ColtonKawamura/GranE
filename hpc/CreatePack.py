@@ -20,20 +20,20 @@ def generate_matlab_command(
 
 def main():
     # Parameter grids
-    N_values        = [400]
+    N_values        = [9000]
     K_values        = [100]
     D_values        = [1]       # Average Diameter
     G_values        = [1.4]     # Ratio of large to small particles
     M_values        = [1]       # Mass of particles
     P_target_values = [.1, .01, .001]
-    seed_values     = [1, 2, 3]
+    seed_values     = [1]
     x_mult_values   = [1]
     y_mult_values   = [1]
-    z_mult_values   = [0]
+    z_mult_values   = [1]
     plotit          = False
     calc_eig        = False
     hertzian        = True
-   save_path       = "./data/packings/2d/hertz/"
+    save_path       = "./data/packings/3d/hooke/"
 
     output_file = "./commandsPack.txt"
 
