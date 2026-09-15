@@ -17,3 +17,4 @@ venv/
 /cc_out.txt
 /memlog.txt
 /tests/memlog.txt
+/data/eigenData/.DS_Store
