@@ -20,19 +20,19 @@ def generate_matlab_command(
 
 def main():
     # Parameter grids
-    N_values        = [9000]
+    N_values        = [216, 1000, 3375, 9000]
     K_values        = [100]
     D_values        = [1]       # Average Diameter
     G_values        = [1.4]     # Ratio of large to small particles
     M_values        = [1]       # Mass of particles
-    P_target_values = [.1, .01, .001]
+    P_target_values = [.03, .003]
     seed_values     = [1]
     x_mult_values   = [1]
     y_mult_values   = [1]
     z_mult_values   = [1]
     plotit          = False
     calc_eig        = False
-    hertzian        = True
+    hertzian        = False
     save_path       = "./data/packings/3d/hooke/"
 
     output_file = "./commandsPack.txt"
