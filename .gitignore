@@ -18,3 +18,4 @@ venv/
 /memlog.txt
 /tests/memlog.txt
 /data/eigenData/.DS_Store
+/data/packings/3d/.DS_Store
