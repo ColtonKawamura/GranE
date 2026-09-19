@@ -53,7 +53,7 @@ stringOutPath = "~/repos/GranE/tests/testPack/data/";
 packRepeatTile(scalNumParts, scalSpringConstant, scalPressTarg, scalWidth, scalSeed, scalXMult, scalYMult, boolCalcEig, stringInPath , stringOutPath);
 delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
-foo = load("data/N368_P.001_Width20_Seed1.mat");
+foo = load("~/repos/GranE/tests/testPack/data/2D_N368_P0.001_Width20_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
     sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
