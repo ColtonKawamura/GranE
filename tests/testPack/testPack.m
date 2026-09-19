@@ -25,8 +25,8 @@ boolCalcEig = false;
 %% without friction
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
+
 foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
-delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
     sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
@@ -40,6 +40,16 @@ scal2DPackFrac = foo.scalPackingFraction;
 scalPressFrictionless = foo.scalPressure;
 clear foo
 % delete("GranE/tests/testPack/data/*.png");
+
+% Test packRepeatTile
+scalXMult = 2;
+scalYMult = 2;
+boolCalcEig = false;
+stringInPath = "~/repos/GranE/tests/testSimMD/data/";
+stringOutPath = "~/repos/GranE/tests/testSimMD/data/";
+
+packRepeatTile(scalNumParts, scalSpringConstant, scalPressTarg, scalSeed, scalXMult, scalYMult, boolCalcEig, stringInPath , stringOutPath);
+delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
 % ----------------- 3D frictionless test -----------------
 scalNumParts = 6^3;
@@ -108,4 +118,7 @@ assert(foo.scalMeanCoordNum > 2 && foo.scalMeanCoordNum < 4.2, ...
 clear foo
 % delete("GranE/tests/testPack/data/*.png");
 
+
 disp('pack.m: ALL PASSED');
+
+
