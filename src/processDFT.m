@@ -88,7 +88,7 @@ legend('show', 'Interpreter', 'latex');
 grid on;
 box on;
 hold off;
-saveas(fig1, fullfile(fig_dir, sprintf('amplitude_%s.png', fig_label)));
+% saveas(fig1, fullfile(fig_dir, sprintf('amplitude_%s.png', fig_label)));
 close(fig1);
 
 % Wavenumber and Phase Fitting and Plotting
@@ -113,7 +113,7 @@ yticks = ceil(y_min/pi) * pi:pi:floor(y_max/pi) * pi;
 yticklabels = arrayfun(@(x) sprintf('%.2f\\pi', x/pi), yticks, 'UniformOutput', false);
 set(gca, 'YTick', yticks, 'YTickLabel', yticklabels);
 hold off;
-saveas(fig2, fullfile(fig_dir, sprintf('phase_%s.png', fig_label)));
+% saveas(fig2, fullfile(fig_dir, sprintf('phase_%s.png', fig_label)));
 close(fig2);
 
 end
