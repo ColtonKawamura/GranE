@@ -16,10 +16,19 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     % packRepeatTile(400, 100, 0.05, 22, 1, 2, 2, false, 'in/tiles/', 'out/tiles/')
 
     %% Load base tile
-    strBaseName = sprintf('2D_N%d_P%s_Width%d_Seed%d', N, num2str(P_target), scalWidthFactor, seed);
+    strBaseName   = sprintf('2D_N%d_P%s_Width%d_Seed%d', N, num2str(P_target), scalWidthFactor, seed);
     strFilenameIn = strInPath + strBaseName + ".mat";
-    load(strFilenameIn, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-        'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+
+    fprintf('Loading file: %s\n', strFilenameIn);
+
+    try
+        load(strFilenameIn, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+            'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+        fprintf('Load SUCCESS: %s\n', strFilenameIn);
+    catch ME
+        fprintf('Load FAILED: %s\n', strFilenameIn);
+        fprintf('Error message: %s\n', ME.message);
+    end
 
     %% Tile in x
     % Shift copies of vecPosX by multiples of scalBoxWidth, keep vecPosY unchanged
