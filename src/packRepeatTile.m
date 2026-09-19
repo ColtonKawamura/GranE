@@ -1,4 +1,4 @@
-function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMulscalBoxWidtht, scalYMult, calc_eig, strInPath, strSavePath)
+function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, calc_eig, strInPath, strSavePath)
     % packRepeatTile  Load a saved 2D packing and tile it in x and/or y.
     %
     % N,              Number of particles in the base tile
@@ -22,8 +22,7 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMulscalBoxWi
     fprintf('Loading file: %s\n', strFilenameIn);
 
     try
-        load(strFilenameIn, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N');
+        load(strFilenameIn);
         fprintf('Load SUCCESS: %s\n', strFilenameIn);
     catch ME
         fprintf('Load FAILED: %s\n', strFilenameIn);
@@ -81,9 +80,39 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMulscalBoxWi
             'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
             'scalNFinal', 'matEigenVectors', 'matEigenValues');
     else
-        save(strFilenameOut, 'vecPosXFinal', 'vecPosYFinal', 'vecDiameterFinal', ...
-            'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
-            'scalNFinal', 'scalWidthFactorFinal', 'scalMass', 'scalDiameterAverage');
+        % Standardize variable names to match pack.m output
+        vecPosX        = vecPosXFinal;
+        vecPosY        = vecPosYFinal;
+        vecDiameter    = vecDiameterFinal;
+        scalBoxWidthX  = scalBoxWidthXTiled;
+        scalBoxHeightY = scalBoxHeightYFinal;
+        N              = scalNFinal;
+        N_original     = N;  % no rattler removal in tiling
+
+        % Packing fraction of the tiled packing
+        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
+        scalVolumeBox_clean     = scalBoxWidthX * scalBoxHeightY;
+        scalPackingFraction     = scalVolumeSpheres_clean / scalVolumeBox_clean;
+        scalPackingFractionFull = scalPackingFraction;  % same for tiling
+
+        % Coordination number not recomputed here — mark as NaN
+        scalMeanCoordNum = NaN;
+
+        % Friction flags: default if not loaded from the base tile
+        if ~exist('boolFrictionOn','var')
+            boolFrictionOn = false;
+        end
+        if ~exist('scalMu','var')
+            scalMu = 0.0;
+        end
+        if ~exist('scalKt','var')
+            scalKt = 0.0;
+        end
+
+        save(strFilenameOut, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
+            'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+            'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
     end
         %% Plot tiled packing
         figure;
