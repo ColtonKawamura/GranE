@@ -182,3 +182,33 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
 
 end
 
+function scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY)
+% computeMeanCoordNum  Mean particle-particle coordination number under
+% full periodic boundary conditions, using the same contact convention as
+% pack.m: a pair (i,j) is in contact when the minimum-image center distance
+% is strictly less than the sum of radii (d_i + d_j)/2, and the per-particle
+% coordination number is the count of such neighbors.
+%
+% O(N^2) pair loop — fine for the tile sizes used here; a cell list can
+% replace this if it is ever needed for much larger packings.
+
+    N = numel(vecPosX);
+    [i, j] = ndgrid(1:N, 1:N);
+    boolUpper = i < j;
+    i = i(boolUpper);
+    j = j(boolUpper);
+
+    vecSepX = vecPosX(j) - vecPosX(i);
+    vecSepX = vecSepX - scalBoxWidthX * round(vecSepX / scalBoxWidthX);
+    vecSepY = vecPosY(j) - vecPosY(i);
+    vecSepY = vecSepY - scalBoxHeightY * round(vecSepY / scalBoxHeightY);
+
+    vecContactDist = (vecDiameter(i) + vecDiameter(j)) / 2;   % r_i + r_j
+    vecSepDistSq   = vecSepX.^2 + vecSepY.^2;
+    boolContact    = vecSepDistSq < vecContactDist.^2;        % strictly touching
+
+    vecCoordNum = accumarray(i(boolContact), 1, [N 1]) ...
+                + accumarray(j(boolContact), 1, [N 1]);
+    scalMeanCoordNum = mean(vecCoordNum);
+end
+
