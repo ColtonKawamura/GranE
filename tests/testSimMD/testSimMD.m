@@ -8,7 +8,7 @@ clear all
 
 scalSpringConst = 100;
 scalMass = 1;
-scalDamping = .01;
+scalDamping = .02;
 scalFreqDrive = 1;
 scalNumPart = 100;
 scalPressure = 0.001;
