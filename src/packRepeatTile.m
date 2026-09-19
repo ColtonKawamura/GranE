@@ -23,7 +23,7 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
 
     try
         load(strFilenameIn, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidth', 'scalBoxHeight', 'K', 'P_target', 'scalPressure', 'N');
+            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N');
         fprintf('Load SUCCESS: %s\n', strFilenameIn);
     catch ME
         fprintf('Load FAILED: %s\n', strFilenameIn);
@@ -31,7 +31,7 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     end
 
     %% Tile in x
-    % Shift copies of vecPosX by multiples of scalBoxWidth, keep vecPosY unchanged
+    % Shift copies of vecPosX by multiples of scalBoxWidthX, keep vecPosY unchanged
     vecPosXTiled = zeros(N * scalXMult, 1);       % [N*scalXMult x 1]
     vecPosYTiled = zeros(N * scalXMult, 1);       % [N*scalXMult x 1]
     vecDiameterTiled = zeros(N * scalXMult, 1);   % [N*scalXMult x 1]
@@ -39,16 +39,16 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     for ii = 0:scalXMult-1
         idxStart = ii*N + 1;
         idxEnd   = ii*N + N;
-        vecPosXTiled(idxStart:idxEnd)    = vecPosX + ii * scalBoxWidth;  % shift x only
+        vecPosXTiled(idxStart:idxEnd)    = vecPosX + ii * scalBoxWidthX;  % shift x only
         vecPosYTiled(idxStart:idxEnd)    = vecPosY;                      % y unchanged
         vecDiameterTiled(idxStart:idxEnd) = vecDiameter;
     end
 
-    scalBoxWidthTiled = scalBoxWidth * scalXMult;
+    scalBoxWidthXTiled = scalBoxWidth * scalXMult;
     scalNTiled        = N * scalXMult;
 
     %% Tile in y
-    % Shift copies of vecPosYTiled by multiples of scalBoxHeight, keep x unchanged
+    % Shift copies of vecPosYTiled by multiples of scalBoxHeightY, keep x unchanged
     vecPosXFinal    = zeros(scalNTiled * scalYMult, 1);   % [N*scalXMult*scalYMult x 1]
     vecPosYFinal    = zeros(scalNTiled * scalYMult, 1);   % [N*scalXMult*scalYMult x 1]
     vecDiameterFinal = zeros(scalNTiled * scalYMult, 1);  % [N*scalXMult*scalYMult x 1]
@@ -57,11 +57,11 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         idxStart = ii*scalNTiled + 1;
         idxEnd   = ii*scalNTiled + scalNTiled;
         vecPosXFinal(idxStart:idxEnd)     = vecPosXTiled;                       % x unchanged
-        vecPosYFinal(idxStart:idxEnd)     = vecPosYTiled + ii * scalBoxHeight;  % shift y only
+        vecPosYFinal(idxStart:idxEnd)     = vecPosYTiled + ii * scalBoxHeightY;  % shift y only
         vecDiameterFinal(idxStart:idxEnd) = vecDiameterTiled;
     end
 
-    scalBoxHeightFinal = scalBoxHeight * scalYMult;
+    scalBoxHeightYFinal = scalBoxHeightY * scalYMult;
     scalNFinal         = scalNTiled * scalYMult;
     scalWidthFactorFinal = scalWidthFactor * scalYMult;
     scalDiameterAverage  = mean(vecDiameterFinal);
@@ -74,15 +74,15 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     if calc_eig
         matPositions = [vecPosXFinal, vecPosYFinal];              % [scalNFinal x 2]
         vecRadii     = vecDiameterFinal ./ 2;                     % [scalNFinal x 1]
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightFinal, scalBoxWidthTiled);
-        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightFinal, scalBoxWidthTiled);  % [2*scalNFinal x 2*scalNFinal]
+        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);
+        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);  % [2*scalNFinal x 2*scalNFinal]
         [matEigenVectors, matEigenValues] = eig(matHessian);
         save(strFilenameOut, 'vecPosXFinal', 'vecPosYFinal', 'vecDiameterFinal', ...
-            'scalBoxWidthTiled', 'scalBoxHeightFinal', 'K', 'P_target', 'scalPressure', ...
+            'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
             'scalNFinal', 'matEigenVectors', 'matEigenValues');
     else
         save(strFilenameOut, 'vecPosXFinal', 'vecPosYFinal', 'vecDiameterFinal', ...
-            'scalBoxWidthTiled', 'scalBoxHeightFinal', 'K', 'P_target', 'scalPressure', ...
+            'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
             'scalNFinal', 'scalWidthFactorFinal', 'scalMass', 'scalDiameterAverage');
     end
 
