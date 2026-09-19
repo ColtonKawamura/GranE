@@ -1,4 +1,4 @@
-function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, calc_eig, strInPath, strSavePath)
+function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMulscalBoxWidtht, scalYMult, calc_eig, strInPath, strSavePath)
     % packRepeatTile  Load a saved 2D packing and tile it in x and/or y.
     %
     % N,              Number of particles in the base tile
@@ -44,7 +44,7 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         vecDiameterTiled(idxStart:idxEnd) = vecDiameter;
     end
 
-    scalBoxWidthXTiled = scalBoxWidth * scalXMult;
+    scalBoxWidthXTiled = scalBoxWidthX * scalXMult;
     scalNTiled        = N * scalXMult;
 
     %% Tile in y
@@ -85,6 +85,45 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
             'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
             'scalNFinal', 'scalWidthFactorFinal', 'scalMass', 'scalDiameterAverage');
     end
+        %% Plot tiled packing
+        figure;
+        hold on;
+        for np = 1:scalNFinal
+            rectangle('Position', [vecPosXFinal(np) - vecDiameterFinal(np)/2, ...
+                                    vecPosYFinal(np) - vecDiameterFinal(np)/2, ...
+                                    vecDiameterFinal(np), vecDiameterFinal(np)], ...
+                      'Curvature', [1 1], 'FaceColor', 'b', 'EdgeColor', 'none');
+        end
+
+        % Ghost tiles around the main box (same style as pack.m)
+        vecOffsets2D = [scalBoxWidthXTiled,  0; ...
+                       -scalBoxWidthXTiled,  0; ...
+                        0,  scalBoxHeightYFinal; ...
+                        0, -scalBoxHeightYFinal; ...
+                        scalBoxWidthXTiled,  scalBoxHeightYFinal; ...
+                       -scalBoxWidthXTiled,  scalBoxHeightYFinal; ...
+                        scalBoxWidthXTiled, -scalBoxHeightYFinal; ...
+                       -scalBoxWidthXTiled, -scalBoxHeightYFinal];
+
+        for iface = 1:8
+            ox = vecOffsets2D(iface, 1);
+            oy = vecOffsets2D(iface, 2);
+            for np = 1:scalNFinal
+                rectangle('Position', [vecPosXFinal(np) + ox - vecDiameterFinal(np)/2, ...
+                                        vecPosYFinal(np) + oy - vecDiameterFinal(np)/2, ...
+                                        vecDiameterFinal(np), vecDiameterFinal(np)], ...
+                          'Curvature', [1 1], 'FaceColor', 'r', 'EdgeColor', 'none', ...
+                          'FaceAlpha', 0.15);
+            end
+        end
+
+        axis equal;
+        axis([-scalBoxWidthXTiled  2*scalBoxWidthXTiled  ...
+              -scalBoxHeightYFinal 2*scalBoxHeightYFinal]);
+        title(sprintf('Tiled packing: N=%d, Xmult=%d, Ymult=%d', ...
+            scalNFinal, scalXMult, scalYMult));
+        drawnow;
+        hold off;
 
     disp("Saved to: " + strFilenameOut);
 
