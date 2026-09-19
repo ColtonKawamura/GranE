@@ -7,6 +7,7 @@ clear all
 % ---- test findNeighbors3D.m first
 
 run("testFindNeighbors3D.m") % testFindNeighbors3D.m shoudl sit next to this test
+delete("~/repos/GranE/tests/testPack/data/*.mat");
 
 
 % ----------------- 2D frictionless test -----------------
@@ -44,12 +45,23 @@ clear foo
 % Test packRepeatTile
 scalXMult = 2;
 scalYMult = 2;
+scalWidth = 10;
 boolCalcEig = false;
-stringInPath = "~/repos/GranE/tests/testSimMD/data/";
-stringOutPath = "~/repos/GranE/tests/testSimMD/data/";
+stringInPath = "~/repos/GranE/tests/testPack/data/";
+stringOutPath = "~/repos/GranE/tests/testPack/data/";
 
-packRepeatTile(scalNumParts, scalSpringConstant, scalPressTarg, scalSeed, scalXMult, scalYMult, boolCalcEig, stringInPath , stringOutPath);
+packRepeatTile(scalNumParts, scalSpringConstant, scalPressTarg, scalWidth, scalSeed, scalXMult, scalYMult, boolCalcEig, stringInPath , stringOutPath);
 delete("data/2D_N100_P0.001_Width10_Seed1.mat");
+
+foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
+
+assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
+    sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
+            foo.scalPackingFraction));
+
+assert(foo.scalMeanCoordNum > 3.6 && foo.scalMeanCoordNum < 4.4, ...
+    sprintf('2D mean coordination number = %.4f, expected between 3.6 and 4.4', ...
+            foo.scalMeanCoordNum));
 
 % ----------------- 3D frictionless test -----------------
 scalNumParts = 6^3;
