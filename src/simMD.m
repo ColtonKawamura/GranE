@@ -301,6 +301,7 @@ try
         fprintf('[simMD] Arrays transferred to GPU.\n');
     else
         % CPU path: just alias names so the loop code is identical
+        mass_g = mass;
         x0_g             = x0;
         y0_g             = y0;
         left_wall_idx_g  = left_wall_idx;
