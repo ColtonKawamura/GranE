@@ -71,14 +71,34 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         strSavePath, scalNFinal, num2str(P_target), scalWidthFactorFinal, seed);
 
     if calc_eig
+        % Eigen path: remove rattlers first, then build the Hessian on the
+        % backbone (pack.m does the same before saving eigenmodes).
         matPositions = [vecPosXFinal, vecPosYFinal];              % [scalNFinal x 2]
         vecRadii     = vecDiameterFinal ./ 2;                     % [scalNFinal x 1]
+        N_original   = scalNFinal;                                % before cleanRats
         [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);
-        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);  % [2*scalNFinal x 2*scalNFinal]
+        vecPosX        = matPositions(:,1);
+        vecPosY        = matPositions(:,2);
+        vecDiameter    = vecRadii .* 2;
+        N              = size(matPositions, 1);
+        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);  % [2*N x 2*N]
         [matEigenVectors, matEigenValues] = eig(matHessian);
-        save(strFilenameOut, 'vecPosXFinal', 'vecPosYFinal', 'vecDiameterFinal', ...
-            'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'K', 'P_target', 'scalPressure', ...
-            'scalNFinal', 'matEigenVectors', 'matEigenValues');
+
+        % Recompute the saved metrics on the backbone, exactly like pack.m
+        scalBoxWidthX  = scalBoxWidthXTiled;
+        scalBoxHeightY = scalBoxHeightYFinal;
+        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
+        scalVolumeBox_clean     = scalBoxWidthX * scalBoxHeightY;
+        scalPackingFraction     = scalVolumeSpheres_clean / scalVolumeBox_clean;
+        scalPackingFractionFull = scalPackingFraction;  % same for tiling
+        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
+        fprintf('Tiled backbone: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
+            N, scalPackingFraction, scalMeanCoordNum);
+
+        save(strFilenameOut, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
+            'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+            'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues');
     else
         % Standardize variable names to match pack.m output
         vecPosX        = vecPosXFinal;
@@ -89,14 +109,20 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         N              = scalNFinal;
         N_original     = N;  % no rattler removal in tiling
 
-        % Packing fraction of the tiled packing
+        % Packing fraction of the tiled packing (identical to the base tile
+        % by construction: tiling scales box area and disk area equally)
         scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
         scalVolumeBox_clean     = scalBoxWidthX * scalBoxHeightY;
         scalPackingFraction     = scalVolumeSpheres_clean / scalVolumeBox_clean;
         scalPackingFractionFull = scalPackingFraction;  % same for tiling
 
-        % Coordination number not recomputed here — mark as NaN
-        scalMeanCoordNum = NaN;
+        % Coordination number recomputed on the tiled packing under full PBC
+        % (same convention as pack.m). Tiling replicates the base contact
+        % network, so for a periodic base packing this equals the base tile's
+        % scalMeanCoordNum.
+        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
+        fprintf('Tiled packing: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
+            N, scalPackingFraction, scalMeanCoordNum);
 
         % Friction flags: default if not loaded from the base tile
         if ~exist('boolFrictionOn','var')
@@ -156,5 +182,35 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
 
     disp("Saved to: " + strFilenameOut);
 
+end
+
+function scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY)
+% computeMeanCoordNum  Mean particle-particle coordination number under
+% full periodic boundary conditions, using the same contact convention as
+% pack.m: a pair (i,j) is in contact when the minimum-image center distance
+% is strictly less than the sum of radii (d_i + d_j)/2, and the per-particle
+% coordination number is the count of such neighbors.
+%
+% O(N^2) pair loop — fine for the tile sizes used here; a cell list can
+% replace this if it is ever needed for much larger packings.
+
+    N = numel(vecPosX);
+    [i, j] = ndgrid(1:N, 1:N);
+    boolUpper = i < j;
+    i = i(boolUpper);
+    j = j(boolUpper);
+
+    vecSepX = vecPosX(j) - vecPosX(i);
+    vecSepX = vecSepX - scalBoxWidthX * round(vecSepX / scalBoxWidthX);
+    vecSepY = vecPosY(j) - vecPosY(i);
+    vecSepY = vecSepY - scalBoxHeightY * round(vecSepY / scalBoxHeightY);
+
+    vecContactDist = (vecDiameter(i) + vecDiameter(j)) / 2;   % r_i + r_j
+    vecSepDistSq   = vecSepX.^2 + vecSepY.^2;
+    boolContact    = vecSepDistSq < vecContactDist.^2;        % strictly touching
+
+    vecCoordNum = accumarray(i(boolContact), 1, [N 1]) ...
+                + accumarray(j(boolContact), 1, [N 1]);
+    scalMeanCoordNum = mean(vecCoordNum);
 end
 
