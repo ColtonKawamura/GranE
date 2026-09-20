@@ -175,7 +175,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     boolFastCompressPhase = true;
     scalMeanCoordNum = NaN;  % mean particle-particle coordination number,
                              % tracked on EVERY pathway (frictionless /
-                             % frictional, 2D / 3D) and saved with the packing
+                             % frictional, 2D / 3D) for the force-balance
+                             % convergence logic; the value SAVED with the
+                             % packing is recomputed after cleanRats via
+                             % the shared computeMeanCoordNum (backbone
+                             % only, matching the stored particles)
              %% Cundall-Strack tangential friction parameters
             %%   boolFrictionOn       = master switch; when false all friction
             %%          paths below are skipped, relaxation identical to original.
@@ -1006,20 +1010,29 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     N_original = numel(vecPosX);  % particle count before cleanRats (for plot titles)
 
     %% Remove rattlers before saving
+    % Shared metric functions (computePackingFraction / computeMeanCoordNum)
+    % are the single source of truth for these definitions — pack.m and
+    % packRepeatTile.m both call them, so updating one definition updates
+    % both algorithms.
     if boolThreeD
-        scalVolumeSpheres = sum((4/3)*pi*(vecDiameter/2).^3);
-        scalVolumeBox = scalBoxWidthX * scalBoxHeightY * scalBoxDepthZ;
+        scalVolumeSpheres = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ);
     else
-        scalVolumeSpheres = sum(pi*(vecDiameter/2).^2);
-        scalVolumeBox = scalBoxWidthX * scalBoxHeightY;
+        scalVolumeSpheres = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
     end
     % Packing fraction of the FULL jammed state (all N particles, before
     % rattler removal). This is the number comparable to the literature
     % (e.g. Silbert 2010, 2D bidisperse: 0.843 frictionless -> 0.767 at
     % mu=10); the post-cleanRats scalPackingFraction is the eigen-analysis
     % backbone fraction and is NOT a jamming-state property.
-    scalPackingFractionFull = scalVolumeSpheres / scalVolumeBox;   % [1 x 1] PF before cleanRats
+    scalPackingFractionFull = scalVolumeSpheres;   % [1 x 1] PF before cleanRats
     fprintf('Packing fraction before cleanRats: %.4f\n', scalPackingFractionFull);
+
+    % The SAVED coordination number is recomputed AFTER cleanRats (see
+    % below) so it describes exactly the particles stored in the file —
+    % the same convention packRepeatTile.m uses when it recomputes on
+    % the particles it loads. In-loop tracking of scalMeanCoordNum
+    % (full state, rattlers included) is kept: the force-balance
+    % convergence logic reads it every step.
 
     fprintf('Running cleanRats...\n');
     if boolThreeD
@@ -1153,6 +1166,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         warning('All particles removed by cleanRats — packing did not jam. Skipping save.');
         return;
     end
+
+    % Coordination number of the SAVED (backbone) packing, via the shared
+    % function — the same convention packRepeatTile.m uses on the particles
+    % it loads, so the two files now agree for the same packing.
+    if boolThreeD
+        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY, vecPosZ, scalBoxDepthZ);
+    else
+        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
+    end
+    fprintf('Mean coordination number after cleanRats: %.4f\n', scalMeanCoordNum);
 
 %% Compute linearized Hertzian contact stiffnesses at jammed state
     if options.hertzian
@@ -1320,13 +1343,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
     % Compute packing fraction after cleanRats
     if boolThreeD
-        scalVolumeSpheres_clean = sum((4/3) * pi * (vecDiameter/2).^3);
-        scalVolumeBox_clean = scalBoxWidthX * scalBoxHeightY * scalBoxDepthZ;
+        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ);
     else
-        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
-        scalVolumeBox_clean = scalBoxWidthX * scalBoxHeightY;
+        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
     end
-    scalPackingFraction = scalVolumeSpheres_clean / scalVolumeBox_clean;
     fprintf('Packing fraction after cleanRats: %.4f\n', scalPackingFraction);
 
     if calc_eig
