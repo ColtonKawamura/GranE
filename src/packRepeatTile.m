@@ -85,11 +85,10 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         [matEigenVectors, matEigenValues] = eig(matHessian);
 
         % Recompute the saved metrics on the backbone, exactly like pack.m
+        % (shared functions: single source of truth for the definitions)
         scalBoxWidthX  = scalBoxWidthXTiled;
         scalBoxHeightY = scalBoxHeightYFinal;
-        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
-        scalVolumeBox_clean     = scalBoxWidthX * scalBoxHeightY;
-        scalPackingFraction     = scalVolumeSpheres_clean / scalVolumeBox_clean;
+        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
         scalPackingFractionFull = scalPackingFraction;  % same for tiling
         scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
         fprintf('Tiled backbone: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
@@ -109,17 +108,16 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
         N              = scalNFinal;
         N_original     = N;  % no rattler removal in tiling
 
-        % Packing fraction of the tiled packing (identical to the base tile
-        % by construction: tiling scales box area and disk area equally)
-        scalVolumeSpheres_clean = sum(pi * (vecDiameter/2).^2);
-        scalVolumeBox_clean     = scalBoxWidthX * scalBoxHeightY;
-        scalPackingFraction     = scalVolumeSpheres_clean / scalVolumeBox_clean;
+        % Packing fraction of the tiled packing, via the shared function
+        % (identical to the base tile by construction: tiling scales box
+        % area and disk area by the same factor)
+        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
         scalPackingFractionFull = scalPackingFraction;  % same for tiling
 
         % Coordination number recomputed on the tiled packing under full PBC
-        % (same convention as pack.m). Tiling replicates the base contact
-        % network, so for a periodic base packing this equals the base tile's
-        % scalMeanCoordNum.
+        % via the shared function (same definition as pack.m). Tiling
+        % replicates the base contact network, so for a periodic base
+        % packing this equals the base tile's scalMeanCoordNum.
         scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
         fprintf('Tiled packing: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
             N, scalPackingFraction, scalMeanCoordNum);
@@ -182,35 +180,5 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
 
     disp("Saved to: " + strFilenameOut);
 
-end
-
-function scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY)
-% computeMeanCoordNum  Mean particle-particle coordination number under
-% full periodic boundary conditions, using the same contact convention as
-% pack.m: a pair (i,j) is in contact when the minimum-image center distance
-% is strictly less than the sum of radii (d_i + d_j)/2, and the per-particle
-% coordination number is the count of such neighbors.
-%
-% O(N^2) pair loop — fine for the tile sizes used here; a cell list can
-% replace this if it is ever needed for much larger packings.
-
-    N = numel(vecPosX);
-    [i, j] = ndgrid(1:N, 1:N);
-    boolUpper = i < j;
-    i = i(boolUpper);
-    j = j(boolUpper);
-
-    vecSepX = vecPosX(j) - vecPosX(i);
-    vecSepX = vecSepX - scalBoxWidthX * round(vecSepX / scalBoxWidthX);
-    vecSepY = vecPosY(j) - vecPosY(i);
-    vecSepY = vecSepY - scalBoxHeightY * round(vecSepY / scalBoxHeightY);
-
-    vecContactDist = (vecDiameter(i) + vecDiameter(j)) / 2;   % r_i + r_j
-    vecSepDistSq   = vecSepX.^2 + vecSepY.^2;
-    boolContact    = vecSepDistSq < vecContactDist.^2;        % strictly touching
-
-    vecCoordNum = accumarray(i(boolContact), 1, [N 1]) ...
-                + accumarray(j(boolContact), 1, [N 1]);
-    scalMeanCoordNum = mean(vecCoordNum);
 end
 
