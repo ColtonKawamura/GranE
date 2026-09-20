@@ -1014,17 +1014,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % are the single source of truth for these definitions — pack.m and
     % packRepeatTile.m both call them, so updating one definition updates
     % both algorithms.
-    if boolThreeD
-        scalVolumeSpheres = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ);
-    else
-        scalVolumeSpheres = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
-    end
     % Packing fraction of the FULL jammed state (all N particles, before
     % rattler removal). This is the number comparable to the literature
     % (e.g. Silbert 2010, 2D bidisperse: 0.843 frictionless -> 0.767 at
     % mu=10); the post-cleanRats scalPackingFraction is the eigen-analysis
     % backbone fraction and is NOT a jamming-state property.
-    scalPackingFractionFull = scalVolumeSpheres;   % [1 x 1] PF before cleanRats
+    if boolThreeD
+        scalPackingFractionFull = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ);
+    else
+        scalPackingFractionFull = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
+    end   % [1 x 1] PF before cleanRats
     fprintf('Packing fraction before cleanRats: %.4f\n', scalPackingFractionFull);
 
     % The SAVED coordination number is recomputed AFTER cleanRats (see
