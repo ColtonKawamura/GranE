@@ -52,16 +52,53 @@ try
 
     fprintf('[simMD] Loading packing: %s\n', filename);
     load(filename);
-    fprintf('[simMD] Packing loaded (%d particles).\n', length(x));
+
+    %% Normalize input to the NEW data-file format
+    %   Two on-disk formats exist:
+    %     OLD: x, y, Dn (row vectors), Lx, Ly, P
+    %     NEW: vecPosX, vecPosY, vecDiameter (column vectors),
+    %          scalBoxWidthX, scalBoxHeightY, scalPressure
+    %   The NEW format is preferred. If the file is OLD (detected by the
+    %   presence of 'x'), convert its variables into the NEW names/shapes so
+    %   the rest of the function works uniformly on the NEW format.
+    if exist('x', 'var')
+        fprintf('[simMD] OLD input format (x/y/Dn) detected; converting to NEW format names.\n');
+        vecPosX        = x(:);
+        vecPosY        = y(:);
+        vecDiameter    = Dn(:);
+        scalBoxWidthX  = Lx;
+        scalBoxHeightY = Ly;
+        if ~exist('scalPressure', 'var')
+            scalPressure = P;
+        end
+    elseif exist('vecPosX', 'var')
+        fprintf('[simMD] NEW input format (vecPosX) detected.\n');
+    else
+        error('simMD:badInput', ...
+            'Input file %s contains neither OLD (x) nor NEW (vecPosX) format variables.', ...
+            char(filename));
+    end
+
+    % The particle arrays are the source of truth for the count.
+    N = length(vecPosX);
+
+    % Short names the rest of this function already uses.
+    x  = vecPosX;
+    y  = vecPosY;
+    Dn = vecDiameter;
+    Lx = scalBoxWidthX;
+    Ly = scalBoxHeightY;
+
+    fprintf('[simMD] Packing loaded (%d particles).\n', N);
 
 %% Clean rattlers
     if options.cleanRats
-        positions = [x', y'];
-        radii = Dn'/2;
+        positions = [x, y];
+        radii = Dn/2;
         [positions, radii] = cleanRats(positions, radii, Ly, Lx);
-        x  = positions(:,1)';
-        y  = positions(:,2)';
-        Dn = 2*radii';
+        x  = positions(:,1);
+        y  = positions(:,2);
+        Dn = 2*radii;
         N  = length(x);
         display("cleaning rattlers");
     end
