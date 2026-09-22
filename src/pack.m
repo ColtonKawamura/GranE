@@ -173,7 +173,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     boolConverged = false; % only update plot after each compression step
     boolCellUpdateNeeded = true; % make sure to update cell list on first step
     boolFastCompressPhase = true;
-    scalMeanCoordNum = NaN;  % mean particle-particle coordination number,
+    scalMeanCoordNum = NaN;  % initiated here so it exisits before the loop for echoing to screen
+                             % mean particle-particle coordination number,
                              % tracked on EVERY pathway (frictionless /
                              % frictional, 2D / 3D) for the force-balance
                              % convergence logic; the value SAVED with the
