@@ -82,34 +82,27 @@ try
     % The particle arrays are the source of truth for the count.
     N = length(vecPosX);
 
-    % Short names the rest of this function already uses.
-    x  = vecPosX;
-    y  = vecPosY;
-    Dn = vecDiameter;
-    Lx = scalBoxWidthX;
-    Ly = scalBoxHeightY;
-
     fprintf('[simMD] Packing loaded (%d particles).\n', N);
 
 %% Clean rattlers
     if options.cleanRats
-        positions = [x, y];
-        radii = Dn/2;
-        [positions, radii] = cleanRats(positions, radii, Ly, Lx);
-        x  = positions(:,1);
-        y  = positions(:,2);
-        Dn = 2*radii;
-        N  = length(x);
+        positions = [vecPosX, vecPosY];
+        radii = vecDiameter/2;
+        [positions, radii] = cleanRats(positions, radii, scalBoxHeightY, scalBoxWidthX);
+        vecPosX = positions(:,1);
+        vecPosY = positions(:,2);
+        vecDiameter = 2*radii;
+        N  = length(vecPosX);
         display("cleaning rattlers");
     end
 
     % Enforce column vectors throughout — critical for GPU indexing
-    x  = x(:);
-    y  = y(:);
-    Dn = Dn(:);
+    vecPosX     = vecPosX(:);
+    vecPosY     = vecPosY(:);
+    vecDiameter = vecDiameter(:);
 
-    % update masses based on diamter
-    mass = (pi/4) .* Dn.^2;
+    % update masses based on diameter
+    mass = (pi/4) .* vecDiameter.^2;
     inv_mass = 1 ./ mass;
     mass_particle_average = mean(mass);
 
@@ -119,8 +112,8 @@ try
     % dt  = pi*sqrt(M/K)*0.005;
     m_min = min(mass); 
     dt = pi*sqrt(m_min/K)*0.005;
-    c_0 = min(Dn)*sqrt(K/m_min);
-    Nt  = round(.8*(Lx/c_0)/dt);
+    c_0 = min(vecDiameter)*sqrt(K/m_min);
+    Nt  = round(.8*(scalBoxWidthX/c_0)/dt);
 
     fprintf('[simMD] Nt = %d, dt = %g\n', Nt, dt);
 
@@ -136,11 +129,11 @@ try
 
 %% Wall / bulk masks
     if seed == 0
-        left_wall_list  = (x < Dn/1);
+        left_wall_list  = (vecPosX < vecDiameter/1);
     else
-        left_wall_list  = (x < Dn/2);
+        left_wall_list  = (vecPosX < vecDiameter/2);
     end
-    right_wall_list = (x > Lx - Dn/2);
+    right_wall_list = (vecPosX > scalBoxWidthX - vecDiameter/2);
     bulk_list       = ~(left_wall_list | right_wall_list);  %#ok<NASGU>
 
     % Index vectors (faster than logical masks for GPU indexed assignment)
@@ -158,12 +151,12 @@ try
         neighbor_list_nn = [];
         spring_list_nn   = [];
         for mm = [1:nn-1, nn+1:N]
-            dy  = y(mm) - y(nn);
-            dy  = dy - round(dy/Ly)*Ly;
-            Dnm = (1+skin)*(Dn(nn)+Dn(mm))/2;
-            if abs(dy) <= Dnm
-                dx  = x(mm) - x(nn);
-                dnm = dx^2 + dy^2;
+            dvecY  = vecPosY(mm) - vecPosY(nn);
+            dvecY  = dvecY - round(dvecY/scalBoxHeightY)*scalBoxHeightY;
+            Dnm = (1+skin)*(vecDiameter(nn)+vecDiameter(mm))/2;
+            if abs(dvecY) <= Dnm
+                dvecX  = vecPosX(mm) - vecPosX(nn);
+                dnm = dvecX^2 + dvecY^2;
                 if dnm < Dnm^2
                     neighbor_list_nn = [neighbor_list_nn, mm];         %#ok<AGROW>
                     spring_list_nn   = [spring_list_nn,   sqrt(dnm)];  %#ok<AGROW>
@@ -211,7 +204,7 @@ try
 % ---- CONTINUES FROM CHUNK 1 ----
 
 %% Verlet state arrays
-    x0 = x;   y0 = y;
+    vecPosX0 = vecPosX;   vecPosY0 = vecPosY;
     ax_old = zeros(N, 1);
     ay_old = zeros(N, 1);
     vx     = zeros(N, 1);
@@ -258,7 +251,7 @@ try
     n_complete_wall              = floor(Nt / T_period_int);
     nt_dft_end(left_wall_list)   = n_complete_wall * T_period_int;
 
-    expected_arrival_nt = floor((x0 - min(x0(left_wall_list))) / c_0 / dt * arrival_safety_factor);
+    expected_arrival_nt = floor((vecPosX0 - min(vecPosX0(left_wall_list))) / c_0 / dt * arrival_safety_factor);
     expected_arrival_nt = max(expected_arrival_nt, 1);
 
     fprintf('[simMD] T_period_int = %d samples, c_0 = %g.\n', T_period_int, c_0);
@@ -273,17 +266,17 @@ try
     end
 
 %% Probe particles
-    [~, idx] = sort(x0);
+    [~, idx] = sort(vecPosX0);
     if options.plotProbes
         probe_targets = [20, 100, 300, 400];
         probe_idx     = zeros(1, 4);
         for pp = 1:4
-            [~, probe_idx(pp)] = min(abs(x0 - probe_targets(pp)));
+            [~, probe_idx(pp)] = min(abs(vecPosX0 - probe_targets(pp)));
         end
         probe_traj_x = zeros(4, Nt);
         probe_traj_y = zeros(4, Nt);
         fprintf('[simMD] Probe particles at x0 = [%.2f, %.2f, %.2f, %.2f].\n', ...
-            x0(probe_idx(1)), x0(probe_idx(2)), x0(probe_idx(3)), x0(probe_idx(4)));
+            vecPosX0(probe_idx(1)), vecPosX0(probe_idx(2)), vecPosX0(probe_idx(3)), vecPosX0(probe_idx(4)));
     else
         fprintf('[simMD] No probe particles being recorded.\n');
     end
@@ -291,10 +284,10 @@ try
 %% GPU transfer (everything hot goes to GPU once, stays there until after the loop)
     if useGPU
         % Particle state
-        x      = gpuArray(x);
-        y      = gpuArray(y);
-        x0_g   = gpuArray(x0);
-        y0_g   = gpuArray(y0);
+        vecPosX     = gpuArray(vecPosX);
+        vecPosY     = gpuArray(vecPosY);
+        vecPosX0_g  = gpuArray(vecPosX0);
+        vecPosY0_g  = gpuArray(vecPosY0);
         vx     = gpuArray(vx);
         vy     = gpuArray(vy);
         ax_old = gpuArray(ax_old);
@@ -339,8 +332,8 @@ try
     else
         % CPU path: just alias names so the loop code is identical
         mass_g = mass;
-        x0_g             = x0;
-        y0_g             = y0;
+        vecPosX0_g     = vecPosX0;
+        vecPosY0_g     = vecPosY0;
         left_wall_idx_g  = left_wall_idx;
         right_wall_idx_g = right_wall_idx;
     end
@@ -360,24 +353,24 @@ try
 
         if options.visSim
             % gather only what visualizer needs — minimal CPU↔GPU transfer
-            visualizeSim(gather(x), x0, gather(y), y0, idx, A, Bv, P, w_D, K, true);
+            visualizeSim(gather(vecPosX), vecPosX0, gather(vecPosY), vecPosY0, idx, A, Bv, P, w_D, K, true);
         end
 
         % ── Verlet step 1: update positions ──────────────────────────────
-        x = x + vx.*dt + ax_old.*dt2_half;
-        y = y + vy.*dt + ay_old.*dt2_half;
+        vecPosX = vecPosX + vx.*dt + ax_old.*dt2_half;
+        vecPosY = vecPosY + vy.*dt + ay_old.*dt2_half;
 
         % ── Forced wall displacements ─────────────────────────────────────
         t_now = nt * dt;
         if options.shear
-            x(left_wall_idx_g) = x0_g(left_wall_idx_g);
-            y(left_wall_idx_g) = y0_g(left_wall_idx_g) + A*sin(w_D*t_now);
+            vecPosX(left_wall_idx_g) = vecPosX0_g(left_wall_idx_g);
+            vecPosY(left_wall_idx_g) = vecPosY0_g(left_wall_idx_g) + A*sin(w_D*t_now);
         else
-            x(left_wall_idx_g) = x0_g(left_wall_idx_g) + A*sin(w_D*t_now);
-            y(left_wall_idx_g) = y0_g(left_wall_idx_g);
+            vecPosX(left_wall_idx_g) = vecPosX0_g(left_wall_idx_g) + A*sin(w_D*t_now);
+            vecPosY(left_wall_idx_g) = vecPosY0_g(left_wall_idx_g);
         end
-        x(right_wall_idx_g) = x0_g(right_wall_idx_g);
-        y(right_wall_idx_g) = y0_g(right_wall_idx_g);
+        vecPosX(right_wall_idx_g) = vecPosX0_g(right_wall_idx_g);
+        vecPosY(right_wall_idx_g) = vecPosY0_g(right_wall_idx_g);
 
         % ── Vectorized GPU force kernel ───────────────────────────────────
         %
@@ -395,15 +388,15 @@ try
         % -----------------------------------------------------------------
 
         % Gather src and dst positions/velocities (single indexed read each)
-        xs  = x(src_flat);    ys  = y(src_flat);
-        xd  = x(dst_flat);    yd  = y(dst_flat);
+        xs  = vecPosX(src_flat);    ys  = vecPosY(src_flat);
+        xd  = vecPosX(dst_flat);    yd  = vecPosY(dst_flat);
         vxs = vx(src_flat);   vys = vy(src_flat);
         vxd = vx(dst_flat);   vyd = vy(dst_flat);
 
         % Displacement vector with periodic boundary in y
         dxv = xd - xs;
         dyv = yd - ys;
-        dyv = dyv - round(dyv./Ly).*Ly;
+        dyv = dyv - round(dyv./scalBoxHeightY).*scalBoxHeightY;
 
         % Distance and spring force magnitude
         dnm  = sqrt(dxv.^2 + dyv.^2);
@@ -449,10 +442,10 @@ try
         ay_old = ay;
 
         % ── DFT accumulation ─────────────────────────────────────────────
-        % if GPU is used,  x and x0_g were transfered to the GPU
+        % if GPU is used,  vecPosX and vecPosX0_g were transfered to the GPU
         % so disp_x is created on the GPU
-        disp_x = x - x0_g; % [N x 1]
-        disp_y = y - y0_g;
+        disp_x = vecPosX - vecPosX0_g; % [N x 1]
+        disp_y = vecPosY - vecPosY0_g;
 
         % ── Full-spectrum trajectory recording  ─────────────────
           %       traj_disp_x  =  N × Nt  matrix
@@ -498,10 +491,10 @@ try
         dft_x           = dft_x           + disp_x .* active_mask .* twiddle;
         dft_y           = dft_y           + disp_y .* active_mask .* twiddle;
         n_dft_samples   = n_dft_samples   + active_mask;
-        running_sum_x   = running_sum_x   + x    .* active_mask;
-        running_sum_y   = running_sum_y   + y    .* active_mask;
-        running_sumsq_x = running_sumsq_x + x.^2 .* active_mask;
-        running_sumsq_y = running_sumsq_y + y.^2 .* active_mask;
+        running_sum_x   = running_sum_x   + vecPosX .* active_mask;
+        running_sum_y   = running_sum_y   + vecPosY .* active_mask;
+        running_sumsq_x = running_sumsq_x + vecPosX.^2 .* active_mask;
+        running_sumsq_y = running_sumsq_y + vecPosY.^2 .* active_mask;
 
         % ── Max-amplitude tracking (optional) ────────────────────────────
         if options.maxAmpTracking
@@ -522,8 +515,8 @@ try
 
         % ── Probe recording (optional, minimal gather) ────────────────────
         if options.plotProbes
-            probe_traj_x(:, nt) = gather(x(probe_idx(:)));
-            probe_traj_y(:, nt) = gather(y(probe_idx(:)));
+            probe_traj_x(:, nt) = gather(vecPosX(probe_idx(:)));
+            probe_traj_y(:, nt) = gather(vecPosY(probe_idx(:)));
         end
 
     end % nt loop
@@ -532,10 +525,10 @@ try
 
 %% Gather GPU arrays back to CPU
     if useGPU
-        x               = gather(x);
-        y               = gather(y);
-        x0              = gather(x0_g);
-        y0              = gather(y0_g);
+        vecPosX         = gather(vecPosX);
+        vecPosY         = gather(vecPosY);
+        vecPosX0        = gather(vecPosX0_g);
+        vecPosY0        = gather(vecPosY0_g);
         vx              = gather(vx);
         vy              = gather(vy);
         dft_x           = gather(dft_x);
@@ -560,7 +553,7 @@ try
 %% Probe plotting
     if options.plotProbes
         time_vector_full = (1:Nt) * dt;
-        plotProbes(time_vector_full, probe_traj_x, probe_traj_y, x0(probe_idx(:)));
+        plotProbes(time_vector_full, probe_traj_x, probe_traj_y, vecPosX0(probe_idx(:)));
     end
 
 
@@ -636,7 +629,7 @@ try
     if options.plotSpectrum && options.fullSpectrum
         fprintf('[simMD] Plotting distance-frequency spectrum ...\n');
 
-        initial_distance = x0(:);
+        initial_distance = vecPosX0(:);
 
         [dist_sorted, sort_idx] = sort(initial_distance);
 
@@ -665,8 +658,8 @@ try
             sqrt(P), ...
             w_D,...
             Bv,... 
-            Lx,...
-            Ly);
+            scalBoxWidthX,...
+            scalBoxHeightY);
 
         title(title_str,...
             'Interpreter', 'latex');
@@ -712,18 +705,18 @@ try
 
     % ── X direction ──────────────────────────────────────────────────────
     fprintf('[simMD] DFT processing X direction ...\n');
-    [~, index_particles]              = sort(x0);
+    [~, index_particles]              = sort(vecPosX0);
     index_oscillating_wall            = left_wall_list;
     driving_frequency                 = w_D / (2*pi);
     driving_amplitude                 = A;
-    initial_distance_from_oscillation = x0;
+    initial_distance_from_oscillation = vecPosX0;
 
     [fitted_attenuation, wavenumber, attenuation_fit_line, ...
      initial_distance_from_oscillation_output, amplitude_vector, ...
      unwrapped_phase_vector, cleaned_particle_index, ...
      x_fft_initial_y, x_fft_initial_z] = ...
         processDFT(dft_x, var_x, driving_amplitude, index_particles, ...
-                       index_oscillating_wall, initial_distance_from_oscillation, y0, y0);
+                       index_oscillating_wall, initial_distance_from_oscillation, vecPosY0, vecPosY0);
 
     if isempty(cleaned_particle_index) && ~options.shear
         fprintf('Simulation P=%d, Omega=%d, Gamma=%d, Seed=%d did not detect attenuation\n', P, w_D, Bv, seed);
@@ -745,15 +738,15 @@ try
 
     % ── Y direction ──────────────────────────────────────────────────────
     fprintf('[simMD] DFT processing Y direction ...\n');
-    [~, index_particles]              = sort(y0);
-    initial_distance_from_oscillation = x0;
+    [~, index_particles]              = sort(vecPosY0);
+    initial_distance_from_oscillation = vecPosX0;
 
     [fitted_attenuation, wavenumber, attenuation_fit_line, ...
      initial_distance_from_oscillation_output, amplitude_vector, ...
      unwrapped_phase_vector, cleaned_particle_index, ...
      y_fft_initial_y, y_fft_initial_z] = ...
         processDFT(dft_y, var_y, driving_amplitude, index_particles, ...
-                       index_oscillating_wall, initial_distance_from_oscillation, y0, y0);
+                       index_oscillating_wall, initial_distance_from_oscillation, vecPosY0, vecPosY0);
 
     if isempty(cleaned_particle_index)
         fprintf('Simulation P=%d, Omega=%d, Gamma=%d, Seed=%d did not detect attenuation\n for y-direction', P, w_D, Bv, seed);
@@ -775,38 +768,38 @@ try
 
 %% Max-amplitude plots (optional)
     if options.maxAmpTracking
-        x0_col = x0(:);
+        vecPosX0_col = vecPosX0(:);
 
         % X direction fit
         valid_x = maxAmpXAfter2(:) > 0;
         if any(valid_x)
-            x0_max_x   = max(x0_col(valid_x));
-            fit_mask_x = valid_x & (x0_col <= 0.75*x0_max_x);
+            x0_max_x   = max(vecPosX0_col(valid_x));
+            fit_mask_x = valid_x & (vecPosX0_col <= 0.75*x0_max_x);
             if sum(fit_mask_x) >= 2
-                p_x = polyfit(x0_col(fit_mask_x), log(maxAmpXAfter2(fit_mask_x)), 1);
+                p_x = polyfit(vecPosX0_col(fit_mask_x), log(maxAmpXAfter2(fit_mask_x)), 1);
                 attenuationMaxAmpX = p_x(1);
-                fit_line_maxX      = exp(polyval(p_x, x0_col(fit_mask_x)));
+                fit_line_maxX      = exp(polyval(p_x, vecPosX0_col(fit_mask_x)));
             else
-                attenuationMaxAmpX = NaN;  fit_mask_x = false(size(x0_col));  fit_line_maxX = [];
+                attenuationMaxAmpX = NaN;  fit_mask_x = false(size(vecPosX0_col));  fit_line_maxX = [];
             end
         else
-            attenuationMaxAmpX = NaN;  fit_mask_x = false(size(x0_col));  fit_line_maxX = [];
+            attenuationMaxAmpX = NaN;  fit_mask_x = false(size(vecPosX0_col));  fit_line_maxX = [];
         end
 
         % Y direction fit
         valid_y = maxAmpYAfter2(:) > 0;
         if any(valid_y)
-            x0_max_y   = max(x0_col(valid_y));
-            fit_mask_y = valid_y & (x0_col <= 0.75*x0_max_y);
+            x0_max_y   = max(vecPosX0_col(valid_y));
+            fit_mask_y = valid_y & (vecPosX0_col <= 0.75*x0_max_y);
             if sum(fit_mask_y) >= 2
-                p_y = polyfit(x0_col(fit_mask_y), log(maxAmpYAfter2(fit_mask_y)), 1);
+                p_y = polyfit(vecPosX0_col(fit_mask_y), log(maxAmpYAfter2(fit_mask_y)), 1);
                 attenuationMaxAmpY = p_y(1);
-                fit_line_maxY      = exp(polyval(p_y, x0_col(fit_mask_y)));
+                fit_line_maxY      = exp(polyval(p_y, vecPosX0_col(fit_mask_y)));
             else
-                attenuationMaxAmpY = NaN;  fit_mask_y = false(size(x0_col));  fit_line_maxY = [];
+                attenuationMaxAmpY = NaN;  fit_mask_y = false(size(vecPosX0_col));  fit_line_maxY = [];
             end
         else
-            attenuationMaxAmpY = NaN;  fit_mask_y = false(size(x0_col));  fit_line_maxY = [];
+            attenuationMaxAmpY = NaN;  fit_mask_y = false(size(vecPosX0_col));  fit_line_maxY = [];
         end
 
         title_str_x = sprintf(['$N=%d,\\ P=%g,\\ \\omega_D=%g,\\ K=%g,\\ B_v=%g,\\ \\mathrm{seed}=%d$\n' ...
@@ -818,10 +811,10 @@ try
 
         figure;
         if any(valid_x)
-            semilogy(x0_col(valid_x), maxAmpXAfter2(valid_x), 'o', ...
+            semilogy(vecPosX0_col(valid_x), maxAmpXAfter2(valid_x), 'o', ...
                 'DisplayName', '$|\Delta x|_{\max}$');  hold on;
             if any(fit_mask_x)
-                semilogy(x0_col(fit_mask_x), fit_line_maxX, '-', ...
+                semilogy(vecPosX0_col(fit_mask_x), fit_line_maxX, '-', ...
                     'DisplayName', sprintf('Fit: $\\alpha_x^{\\max}=%.4f$', -attenuationMaxAmpX));
             end
         else; hold on; end
@@ -835,10 +828,10 @@ try
 
         figure;
         if any(valid_y)
-            semilogy(x0_col(valid_y), maxAmpYAfter2(valid_y), 'o', ...
+            semilogy(vecPosX0_col(valid_y), maxAmpYAfter2(valid_y), 'o', ...
                 'DisplayName', '$|u_y|_{\max}$');  hold on;
             if any(fit_mask_y)
-                semilogy(x0_col(fit_mask_y), fit_line_maxY, '-', ...
+                semilogy(vecPosX0_col(fit_mask_y), fit_line_maxY, '-', ...
                     'DisplayName', sprintf('Fit: $\\alpha_y^{\\max}=%.4f$', -attenuationMaxAmpY));
             end
         else; hold on; end
@@ -852,7 +845,7 @@ try
     end
 
 %% Dimensionless quantities
-    diameter_average                        = mean(Dn);
+    diameter_average                        = mean(vecDiameter);
     attenuation_x_dimensionless             = attenuation_x * diameter_average;
     attenuation_y_dimensionless             = attenuation_y * diameter_average;
     wavenumber_x_dimensionless              = wavenumber_x  * diameter_average;
@@ -887,7 +880,7 @@ try
     if options.maxAmpTracking
         attenuationMaxAmpX_dimensionless = attenuationMaxAmpX * diameter_average;
         attenuationMaxAmpY_dimensionless = attenuationMaxAmpY * diameter_average;
-        save(save_path, 'x0', 'maxAmpXAfter2', 'maxAmpYAfter2', ...
+        save(save_path, 'vecPosX0', 'maxAmpXAfter2', 'maxAmpYAfter2', ...
             'attenuationMaxAmpX_dimensionless', 'attenuationMaxAmpY_dimensionless', '-append');
     end
     fprintf('[simMD] Output saved.\n');
