@@ -307,8 +307,7 @@ function plotModes(resultsDir, avg_mass, options)
             % recomputed from the saved positions, exactly as pack.m does.
             %------------------------------------------------------
             if flagCoordNumRow
-                % Zn = getfield_or_empty(results.packing,'scalMeanCoordNum');
-                Zn = computeMeanCoordNum(results.packing);
+                Zn = getfield_or_empty(results.packing,'scalMeanCoordNum');
                 if isempty(Zn) || ~isfinite(Zn) || Zn <= 0
                     Zn = computeMeanCoordNum(results.packing);
                 end
