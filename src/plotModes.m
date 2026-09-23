@@ -29,6 +29,11 @@ function plotModes(resultsDir, avg_mass, options)
     %
     % Example:
     %   plotModes('3dUniformMass/', 1.0);
+    %   plotModes("/Users/coltonkawamura/repos/GranE/data/eigenData/iso3d-uniform-mass/", 1)
+    %
+    %   opts = struct()
+    %   opts.flagCoordNumRow = true;
+    %   plotModes("~/repos/GranE/data/eigenData/iso3d-uniform-mass/", 1, opts)
     %
     %   opts.argGamma    = [0.01 0.001];
     %   opts.argPressure = [0.1 0.02];
@@ -302,7 +307,8 @@ function plotModes(resultsDir, avg_mass, options)
             % recomputed from the saved positions, exactly as pack.m does.
             %------------------------------------------------------
             if flagCoordNumRow
-                Zn = getfield_or_empty(results.packing,'scalMeanCoordNum');
+                % Zn = getfield_or_empty(results.packing,'scalMeanCoordNum');
+                Zn = computeMeanCoordNum(results.packing);
                 if isempty(Zn) || ~isfinite(Zn) || Zn <= 0
                     Zn = computeMeanCoordNum(results.packing);
                 end
