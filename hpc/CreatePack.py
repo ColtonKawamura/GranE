@@ -20,16 +20,16 @@ def generate_matlab_command(
 
 def main():
     # Parameter grids
-    N_values        = [216, 1000, 3375, 9000]
+    N_values        = [1000]
     K_values        = [100]
     D_values        = [1]       # Average Diameter
     G_values        = [1.4]     # Ratio of large to small particles
     M_values        = [1]       # Mass of particles
-    P_target_values = [.03, .003]
-    seed_values     = [1]
+    P_target_values = [.0001, .0003, .001, .003, .01, .03, .1]
+    seed_values     = [1,2]
     x_mult_values   = [1]
     y_mult_values   = [1]
-    z_mult_values   = [1]
+    z_mult_values   = [160]
     plotit          = False
     calc_eig        = False
     hertzian        = False
