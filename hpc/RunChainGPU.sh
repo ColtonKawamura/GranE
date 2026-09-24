@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=shearGPU
+#SBATCH --job-name=largePack
 #SBATCH --output=/scratch/%u/matlab_logs/job_%A_%a.out
 #SBATCH --error=/scratch/%u/matlab_logs/job_%A_%a.out
-#SBATCH --array=1-1000%100
+#SBATCH --array=1-3%3
 #SBATCH --partition=capacity
 #SBATCH --gres=gpu:l4:1
 #SBATCH --cpus-per-task=16 # This is cluster policy 16 CPU per GPU
-#SBATCH --mem=3G
+#SBATCH --mem=5G
 #SBATCH --time=6-00:00:00
 #SBATCH --mail-type=START,END,FAIL
 #SBATCH --mail-user=c.kawamura@uva.nl
@@ -20,9 +20,9 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 
-cd /home/ckawamu/repos/GranMA
+cd /home/ckawamu/repos/GranE
 
-CMDFILE="${CMDFILE:-hpc_scripts/commandsShearGPU.txt}"
+CMDFILE="${CMDFILE:-hpc/commandsPack.txt}"
 IDX=$((SLURM_ARRAY_TASK_ID + ${OFFSET:-0}))
 CMD=$(sed -n "${IDX}p" "$CMDFILE")
 
