@@ -1,20 +1,22 @@
-import numpy as np
+import os
 
 def generate_matlab_command(
     N, K, D, G, M, P_target, seed,
     plotit, x_mult, y_mult, z_mult,
-    calc_eig, save_path, hertzian
+    calc_eig, save_path
 ):
     plotit_str   = "true" if plotit else "false"
     calc_eig_str = "true" if calc_eig else "false"
-    hertzian_str = "true" if hertzian else "false"
 
-    # z_mult decides 2D vs 3D inside MATLAB (boolThreeD = (z_mult ~= 0))
+    # z_mult decides 2D vs 3D inside MATLAB (boolThreeD = (z_mult ~= 0)).
+    # pack now takes 13 positional args (no name-value 'hertzian' pair);
+    # hertzian is only selectable via the optional trailing options struct,
+    # which we don't pass here, so it defaults to false (Hooke).
     return (
         f"matlab -nodisplay -nosplash -r \"addpath('./src/'); try; "
         f"pack({N}, {K}, {D}, {G}, {M}, {P_target}, {seed}, "
         f"{plotit_str}, {x_mult}, {y_mult}, {z_mult}, "
-        f"{calc_eig_str}, '{save_path}', 'hertzian', {hertzian_str}); "
+        f"{calc_eig_str}, '{save_path}'); "
         f"catch e; disp(e.message); end; exit\""
     )
 
@@ -32,10 +34,9 @@ def main():
     z_mult_values   = [160]
     plotit          = False
     calc_eig        = False
-    hertzian        = False
     save_path       = "./data/packings/3d/hooke/"
 
-    output_file = "./commandsPack.txt"
+    output_file = os.path.join(os.path.dirname(__file__), "commandsPack.txt")
 
     with open(output_file, "w") as file:
         for N in N_values:
@@ -52,7 +53,7 @@ def main():
                                                         N, K, D, G, M,
                                                         P_target, seed,
                                                         plotit, x_mult, y_mult, z_mult,
-                                                        calc_eig, save_path, hertzian
+                                                        calc_eig, save_path
                                                         )
                                                 file.write(command + "\n")
 
