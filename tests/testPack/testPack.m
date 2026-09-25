@@ -66,6 +66,11 @@ assert(foo.scalMeanCoordNum > 3.6 && foo.scalMeanCoordNum < 4.4, ...
 % ----------------- 3D frictionless test -----------------
 scalNumParts = 6^3;
 scalZMult = 1;
+% Reset the 2D-tile multipliers: the 2D-tile phase left scalXMult/scalYMult = 2,
+% and a 3D BASE packing must tile 1x1x1, not inherit 2D multipliers (which
+% would otherwise trigger the 3D repeat-tile path below).
+scalXMult = 1;
+scalYMult = 1;
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/')
 
 
@@ -82,6 +87,57 @@ assert(foo.scalMeanCoordNum > 5.5 && foo.scalMeanCoordNum < 6.5, ...
 
 % delete("GranE/tests/testPack/data/*.png");
 clear foo
+
+% ----------------- 3D repeat-tile invariance test -----------------
+% A 10x10x10 (1000-particle) base tile is tiled 9x in z -> 9000 particles.
+% If the tiling lines up periodically across tile boundaries, the packing
+% fraction and the coordination number are INVARIANT: tiling scales particle
+% volume and box volume by the same factor (PF unchanged) and replicates the
+% contact network under full PBC (Zn unchanged). This is the requested smoke
+% test on a small packing (<= 9000 particles) that verifies the tiling is
+% physically consistent, not merely error-free.
+scalNumParts3D = 10^3;               % 1000 = 10x10x10 base tile
+optsTile = struct('saveFullState', true);  % 3D repeat-tile needs the pre-cleanRats state
+% z_mult = 9 -> 3D mode (z_mult ~= 0) AND 9 copies in z -> 9000 particles.
+pack(scalNumParts3D, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, ...
+    scalPressTarg, scalSeed, false, 1, 1, 9, false, 'data/', optsTile)
+
+% Load the base FULL (pre-cleanRats) state: the tile source (1000 particles).
+strBaseFull = "data/3D_N1000_P0.001_Width10_Seed1_Full.mat";
+assert(isfile(strBaseFull), sprintf('base full-state tile missing: %s', strBaseFull));
+base = load(strBaseFull);
+basePF = computePackingFraction(base.vecDiameter, base.scalBoxWidthX, base.scalBoxHeightY, base.scalBoxDepthZ);
+baseZn = computeMeanCoordNum(base.vecPosX, base.vecPosY, base.vecDiameter, base.scalBoxWidthX, base.scalBoxHeightY, base.vecPosZ, base.scalBoxDepthZ);
+
+% Load the TILED (9000-particle superlattice) and recompute PF + Zn from its
+% stored positions (independent of the stored summary numbers).
+strTiled = "data/3D_N9000_P0.001_Width10_Seed1_TiledX1Y1Z9.mat";
+assert(isfile(strTiled), sprintf('tiled 9000-particle file missing: %s', strTiled));
+til = load(strTiled);
+assert(til.N == 9000, sprintf('tiled N = %d, expected 9000', til.N));
+tilPF = computePackingFraction(til.vecDiameter, til.scalBoxWidthX, til.scalBoxHeightY, til.scalBoxDepthZ);
+tilZn = computeMeanCoordNum(til.vecPosX, til.vecPosY, til.vecDiameter, til.scalBoxWidthX, til.scalBoxHeightY, til.vecPosZ, til.scalBoxDepthZ);
+
+fprintf('3D tile invariance: base PF=%.6f Zn=%.4f | tiled PF=%.6f Zn=%.4f\n', basePF, baseZn, tilPF, tilZn);
+
+% The stored summary metrics should agree with the geometry recomputation
+% (guards against a save() that recorded the wrong state).
+assert(abs(til.scalPackingFraction - tilPF) < 1e-6, ...
+    sprintf('tiled stored PF=%.6f differs from recomputed %.6f', til.scalPackingFraction, tilPF));
+assert(abs(til.scalMeanCoordNum - tilZn) < 1e-3, ...
+    sprintf('tiled stored Zn=%.4f differs from recomputed %.4f', til.scalMeanCoordNum, tilZn));
+
+% The invariance the user asked to verify: PF and Zn unchanged by tiling.
+assert(abs(tilPF - basePF) < 1e-9, ...
+    sprintf('PF changed under tiling: base=%.6f tiled=%.6f', basePF, tilPF));
+assert(abs(tilZn - baseZn) < 1e-6, ...
+    sprintf('Zn changed under tiling: base=%.4f tiled=%.4f', baseZn, tilZn));
+
+% Clean up so the suite can re-run without stale-file skips.
+delete(strBaseFull);
+delete(strTiled);
+delete("data/3D_N1000_P0.001_Width10_Seed1.mat");
+clear base til
 
 %% with friction
 
