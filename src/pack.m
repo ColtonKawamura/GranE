@@ -153,13 +153,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     %% (mean Zn >= scalFrictionZmin). Force balance is the physically correct
     %% "settled" signal: a balanced packing has ~zero accelerations, so KE
     %% decays and P becomes a smooth function of box size (no limit cycle).
-    scalFrictionRate         = 0.005;      % box change per step while P is outside the dead-band
-    scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
     scalFrictionForceTol     = 0.01;        % accept when max|F_net|/mean|F_contact| < 1%
     scalFrictionBalCount      = 0;          % consecutive in-band steps satisfying force balance
     scalFrictionBalWindow     = 300;        % sustained force-balance steps to accept
     scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
                                              % (frictional 2D isostatic z_iso = 3)
+    scalFrictionBisectionRate    = 0.01;      % coarse fixed-rate compress step (per step) while the
+                                             % box is loose (virial < P_lo) and no dense bound is set
+    scalFrictionBisectionTol     = 0.15;      % virial in-band: |P - P_target|/P_target < 15%
+                                             % (matches the old 15% dead-band width)
+    scalFrictionMaxResizes       = 3000;      % safety cap on the number of discrete box resizes
+    scalFrictionResizeCount      = 0;         % discrete resizes this run
+    scalFrictionLdense           = NaN;       % last box size that overshot P_target (over-compressed)
+                                             % NaN until the first over-compression; bisect only
+                                             % once both loose and dense bounds are bracketed
+    vecFrictionPosLooseX = zeros(N, 1);       % cached positions at the last loose size (revert target)
+    vecFrictionPosLooseY = zeros(N, 1);
+    scalFrictionResizeCount      = 0;         % discrete box resizes this run
     scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase (safety only)
     scalFrictionVelDecay      = 0.10;       % per-step velocity/omega decay for the frictional
                                              % relaxation. Damping rate = decay/dt ~ 16 per
@@ -839,50 +849,39 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % that can relieve an over-compressed box -- never fires. Gating on
         % ~boolFrictionOn leaves the frictionless path byte-for-byte identical.
         if boolFrictionOn
-              % Frictional box controller + FORCE-BALANCE convergence.
-              % The box is driven toward P_target with a relative-pressure
-              % dead-band (compress when loose, expand when dense, HOLD when
-              % in-band). Convergence is NOT "box happened to stop moving" or
-              % "P in a band" (both are transients of the compression); it is
-              % per-particle FORCE BALANCE: max_i |F_net,i| / mean |F_contact|
-              % below a small tolerance, sustained for several hundred
-              % consecutive in-band steps, with a percolating contact network.
-              % This matches OverDamp.cpp's Acc_max < Fthresh and the DEM
-              % relaxation stopping criteria in the jamming literature.
-              boolBoxMoved = false;
-              if abs(scalPressure - P_target) / P_target < scalFrictionDeadBand
-                  % in-band: hold the box fixed; let the grains relax to balance
-                  boolBoxMoved = false;
-              elseif scalPressure < P_target * (1 - scalFrictionDeadBand)
-                  rate = -scalFrictionRate;   % compress (box too loose)
-                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                  vecPosX = vecPosX *(1 + rate);
-                  vecPosY = vecPosY *(1 + rate);
-                  if boolThreeD
-                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                     vecPosZ = vecPosZ *(1 + rate);
-                  end
-                  boolCellUpdateNeeded = true;
-                  boolBoxMoved = true;
+              % === Frictional packing: virial-pressure bisection controller (issue #16) ===
+              % Root cause: the old controller drove the box every step from a
+              % transient energy-pressure proxy, feeding back with the wrong
+              % sign/gain into a relaxation limit cycle.
+              %
+              % New protocol (reference CundallStrack_2D/main.cpp; Silbert 2010,
+              % Shundyak 2007, Somfai 2007, Santos et al. 2024): relax at a FIXED
+              % box (the over-drag settles the grains to force balance), measure
+              % the VIRIAL pressure, then act ONCE as a discrete event -- compress
+              % by a fixed fraction when loose, or, on over-compression, REVERT to
+              % the last loose configuration and bisect the box between the last
+              % loose and dense sizes (compress half as much as the step that
+              % overshot -- the "revert and compress half" idea).
+              %
+              % Virial pressure (2D, isotropic). The tangential part cancels in P.r,
+              % so the normal-contact contribution equals the reference Stress.cpp
+              % virial P = 0.5*Sigma(Fx dx + Fy dy)/A. Repulsive contacts -> P > 0.
+              if scalNumContacts > 0
+                  virialSum = -(vecForceContactX .* vecSepX + vecForceContactY .* vecSepY);
+                  P_virial  = 0.5 * sum(virialSum) / (scalBoxWidthX * scalBoxHeightY);
               else
-                  rate =  scalFrictionRate;   % expand (box too dense)
-                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                  vecPosX = vecPosX *(1 + rate);
-                  vecPosY = vecPosY *(1 + rate);
-                  if boolThreeD
-                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                     vecPosZ = vecPosZ *(1 + rate);
-                  end
-                  boolCellUpdateNeeded = true;
-                  boolBoxMoved = true;
+                  P_virial = 0;   % no contacts: unjammed
               end
+              scalPressure = P_virial;   % report virial pressure for the frictional path
 
-              % Force-balance measure: net contact force (normal + tangential)
-              % on each grain. A jammed, settled packing has ~zero net force on
-              % every grain (mechanical equilibrium under PBC). Normalized by
-              % the mean contact force so the threshold is scale-free.
+              P_lo = P_target * (1 - scalFrictionBisectionTol);
+              P_hi = P_target * (1 + scalFrictionBisectionTol);
+              boolInBand = (P_virial >= P_lo) && (P_virial <= P_hi);
+
+              % Force-balance measure: net contact force (normal + tangential) on
+              % each grain. A jammed, settled packing has ~zero net force on every
+              % grain (mechanical equilibrium under PBC); normalized by mean
+              % contact force so the threshold is scale-free.
               if scalNumContacts > 0
                   vecNetFx = accumarray(vecContactNN, vecForceContactX, [N 1]) ...
                            - accumarray(vecContactMM, vecForceContactX, [N 1]) ...
@@ -892,38 +891,91 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                            - accumarray(vecContactMM, vecForceContactY, [N 1]) ...
                            + accumarray(vecContactNN, vecFtY, [N 1]) ...
                            - accumarray(vecContactMM, vecFtY, [N 1]);
-                  vecFnetMag     = sqrt(vecNetFx.^2 + vecNetFy.^2);
-                  scalMaxFnet    = max(vecFnetMag);
-                  scalMeanFc     = mean([abs(vecForceMag); abs(vecFtMag)]);
+                  vecFnetMag   = sqrt(vecNetFx.^2 + vecNetFy.^2);
+                  scalMaxFnet  = max(vecFnetMag);
+                  scalMeanFc   = mean([abs(vecForceMag); abs(vecFtMag)]);
                   scalForceRatio = scalMaxFnet / max(scalMeanFc, eps);
               else
                   scalForceRatio = inf;   % no contacts: not balanced, not percolating
               end
+              boolForceBalanced = (scalNumContacts > 0) && (scalForceRatio < scalFrictionForceTol);
+              boolPercol        = (scalMeanCoordNum >= scalFrictionZmin);
 
-              % Acceptance: P in-band, contact network percolates, box held, and
-              % sustained force balance. The percolation guard (mean Zn) plus the
-              % "box held" guard prevent accepting a loose, unjammed state whose
-              % net force is trivially small simply because it carries no load.
-              boolInBand   = abs(scalPressure - P_target) / P_target < scalFrictionDeadBand;
-              boolPercol   = (scalMeanCoordNum >= scalFrictionZmin);
-              boolBalanced = (scalForceRatio < scalFrictionForceTol);
-              if boolInBand && boolPercol && boolBalanced && ~boolBoxMoved
+              % Act only when the grains are settled, or truly dilute (no contacts,
+              % force-balance undefined). Never resize mid-relaxation -- that is what
+              % fed the old limit cycle.
+              boolBoxMoved = false;
+              if boolForceBalanced || scalNumContacts == 0
+                  if boolInBand && boolForceBalanced
+                      % Equilibrium reached: hold the box, count toward convergence.
+                      boolBoxMoved = false;
+                  else
+                      % Discrete resize. CundallStrack_2D/main.cpp style: coarse
+                      % fixed-rate compression while loose with no dense bound; then
+                      % bisect + revert to the loose snapshot.
+                      if P_virial < P_lo
+                          % Loose: record the loose anchor, then shrink.
+                          scalFrictionLloose   = scalBoxWidthX;
+                          vecFrictionPosLooseX = vecPosX;
+                          vecFrictionPosLooseY = vecPosY;
+                      else
+                          % Over-compressed: record the dense bound; the box is bisected
+                          % toward the loose anchor in the block below.
+                          scalFrictionLdense = scalBoxWidthX;
+                      end
+                      if isfinite(scalFrictionLdense)
+                          % bisect: new L = (Lloose + Ldense)/2, i.e. shrink the loose
+                          % anchor by (Lloose - Ldense)/(2*Lloose).
+                          rate = (scalFrictionLloose - scalFrictionLdense) / ...
+                                 (2 * scalFrictionLloose);
+                          vecPosX = vecFrictionPosLooseX * (1 + rate);
+                          vecPosY = vecFrictionPosLooseY * (1 + rate);
+                      else
+                          rate = -scalFrictionBisectionRate;
+                          vecPosX = vecPosX * (1 + rate);
+                          vecPosY = vecPosY * (1 + rate);
+                      end
+                      scalBoxWidthX  = scalBoxWidthX  * (1 + rate);
+                      scalBoxHeightY = scalBoxHeightY * (1 + rate);
+                      vecPosX = vecPosX * (1 + rate);
+                      vecPosY = vecPosY * (1 + rate);
+                      boolCellUpdateNeeded = true;
+                      boolBoxMoved = true;
+                      % restart the relaxation from rest at the new size
+                      vecVelX = zeros(N, 1);
+                      vecVelY = zeros(N, 1);
+                      if boolThreeD
+                          vecVelZ = zeros(N, 1);
+                      end
+                      vecOmega = zeros(N, 1);
+                      scalFrictionResizeCount = scalFrictionResizeCount + 1;
+                  end
+              end
+
+              if mod(nt, 5000) == 0
+                  fprintf('  [fric] step %d | Pvir/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f | balCount=%d | resize=%d\n', ...
+                      nt, P_virial / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount, scalFrictionResizeCount);
+              end
+              % Acceptance: virial pressure in-band, contact network percolates, box
+              % held, sustained force balance. The percolation guard plus the "box
+              % held" guard prevent accepting a loose, unjammed state whose net force
+              % is trivially small simply because it carries no load.
+              if boolInBand && boolPercol && boolForceBalanced && ~boolBoxMoved
                   scalFrictionBalCount = scalFrictionBalCount + 1;
               else
                   scalFrictionBalCount = 0;
               end
-
-              if mod(nt, 5000) == 0
-                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f | balCount=%d\n', ...
-                      nt, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount);
-              end
               if scalFrictionBalCount >= scalFrictionBalWindow
-                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
+                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | Pvir=%.4e (Pvir/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
+                      nt, P_virial, P_virial / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
                   break;
               elseif nt >= scalFrictionMaxSteps
-                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalForceRatio, scalMeanCoordNum);
+                  fprintf('Frictional MAX-STEP cap at step %d | Pvir=%.4e (Pvir/Pt=%.3f) maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
+                      nt, P_virial, P_virial / P_target, scalForceRatio, scalMeanCoordNum);
+                  break;
+              elseif scalFrictionResizeCount >= scalFrictionMaxResizes
+                  fprintf('Frictional MAX-RESIZES cap at step %d | resize=%d | Pvir/Pt=%.3f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f\n', ...
+                      nt, scalFrictionResizeCount, P_virial / P_target, scalForceRatio, scalMeanCoordNum);
                   break;
               end
         elseif boolFastCompressPhase
