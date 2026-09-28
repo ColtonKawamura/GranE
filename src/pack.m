@@ -212,7 +212,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalGammaNormal          = options.scalGammaNormal;
     scalGammaTangential     = options.scalGammaTangential;
     boolSaveFricState       = options.saveFrictionalState;
-    boolFrictionActive      = ~boolFrictionOn;
+    boolFrictionActive      = false;
     scalFrictionHoldCounter = 0;
     boolHaveLooseSnapshot   = false;
     boolHaveDenseSnapshot   = false;
@@ -880,7 +880,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                   if boolFrictionActive && ~boolThreeD
                       scalMeanFc = mean([abs(vecForceMag); abs(vecFtMag)]);
                   end
-                  vecFnetMag     = M .* sqrt(vecAccelX.^2 + vecAccelY.^2);
+                  if boolThreeD
+                      vecFnetMag = M .* sqrt(vecAccelX.^2 + vecAccelY.^2 + vecAccelZ.^2);
+                  else
+                      vecFnetMag = M .* sqrt(vecAccelX.^2 + vecAccelY.^2);
+                  end
                   scalMaxFnet    = max(vecFnetMag);
                   scalMeanFnet   = mean(vecFnetMag);
                   scalForceRatio = scalMeanFnet / max(scalMeanFc, eps);
