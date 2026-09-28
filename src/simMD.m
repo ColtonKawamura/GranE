@@ -38,31 +38,46 @@ try
         fprintf('[simMD] No GPU found — running on CPU.\n');
     end
 
-%% Check for previous output
-    packing_name    = string(sprintf("2D_N%d_P%s_Width%d_Seed%d", N, num2str(P), W, seed));
-    filename_output = string(sprintf("%s_K%d_Bv%d_wD%.2f_M%d.mat", packing_name, K, Bv, w_D, M));
+%% Check for previous output + auto-detect 2D vs 3D
+    % Candidate packing names (pack.m conventions)
+    packing_name_3D = sprintf("3D_N%d_P%s_Width%d_Seed%d", N, num2str(P), W, seed);
+    packing_name_2D = sprintf("2D_N%d_P%s_Width%d_Seed%d", N, num2str(P), W, seed);
+
+    file_3D = fullfile(in_path, packing_name_3D + ".mat");
+    file_2D = fullfile(in_path, packing_name_2D + ".mat");
+
+    if exist(file_3D, 'file')
+        is3D        = true;
+        packing_name = packing_name_3D;
+        filename     = file_3D;
+    elseif exist(file_2D, 'file')
+        is3D        = false;
+        packing_name = packing_name_2D;
+        filename     = file_2D;
+    else
+        error('simMD:NoPackingFile', ...
+            'No 2D or 3D packing file found for N=%d, P=%s, W=%d, seed=%d in %s', ...
+            N, num2str(P), W, seed, in_path);
+    end
+
+    filename_output = sprintf("%s_K%d_Bv%d_wD%.2f_M%d.mat", packing_name, K, Bv, w_D, M);
     save_path       = fullfile(out_path, filename_output);
 
-    if exist(char(out_path + filename_output), 'file')
-        display("output already exists: " + out_path + filename_output);
+    if exist(save_path, 'file')
+        display("output already exists: " + save_path);
         return
     end
+
     input_pressure = P;
-    filename = in_path + packing_name + ".mat";
 
     fprintf('[simMD] Loading packing: %s\n', filename);
     load(filename);
 
-    %% Normalize input to the NEW data-file format
-    %   Two on-disk formats exist:
-    %     OLD: x, y, Dn (row vectors), Lx, Ly, P
-    %     NEW: vecPosX, vecPosY, vecDiameter (column vectors),
-    %          scalBoxWidthX, scalBoxHeightY, scalPressure
-    %   The NEW format is preferred. If the file is OLD (detected by the
-    %   presence of 'x'), convert its variables into the NEW names/shapes so
-    %   the rest of the function works uniformly on the NEW format.
+%% Normalize input to NEW 2D / NEW 3D / OLD 2D formats
+
     if exist('x', 'var')
-        fprintf('[simMD] OLD input format (x/y/Dn) detected; converting to NEW format names.\n');
+        % OLD 2D format: x, y, Dn, Lx, Ly, P
+        fprintf('[simMD] OLD 2D input format (x/y/Dn) detected; converting to NEW 2D.\n');
         vecPosX        = x(:);
         vecPosY        = y(:);
         vecDiameter    = Dn(:);
@@ -71,26 +86,58 @@ try
         if ~exist('scalPressure', 'var')
             scalPressure = P;
         end
+        is3D = false;  % override: OLD format is always 2D
+
     elseif exist('vecPosX', 'var')
-        fprintf('[simMD] NEW input format (vecPosX) detected.\n');
+        if exist('vecPosZ', 'var') && exist('scalBoxDepthZ', 'var')
+            fprintf('[simMD] NEW 3D input format (vecPosX/vecPosY/vecPosZ) detected.\n');
+            % vecPosX, vecPosY, vecPosZ, vecDiameter, scalBoxWidthX,
+            % scalBoxHeightY, scalBoxDepthZ, scalPressure already loaded
+            is3D = true;
+        else
+            fprintf('[simMD] NEW 2D input format (vecPosX/vecPosY) detected.\n');
+            % vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalPressure already loaded
+            is3D = false;
+        end
     else
         error('simMD:badInput', ...
             'Input file %s contains neither OLD (x) nor NEW (vecPosX) format variables.', ...
             char(filename));
     end
 
-    % The particle arrays are the source of truth for the count.
+    % Enforce column vectors
+    vecPosX     = vecPosX(:);
+    vecPosY     = vecPosY(:);
+    vecDiameter = vecDiameter(:);
+    if is3D
+        vecPosZ = vecPosZ(:);
+    end
+
+    % Particle count from positions (source of truth)
     N = length(vecPosX);
+    if is3D
+        dimStr = '3D';
+    else
+        dimStr = '2D';
+    end
+    fprintf('[simMD] Packing loaded (%d particles, %s).\n', N, dimStr);
 
-    fprintf('[simMD] Packing loaded (%d particles).\n', N);
-
-%% Clean rattlers
+%% Clean rattlers (auto 2D/3D)
     if options.cleanRats
-        positions = [vecPosX, vecPosY];
-        radii = vecDiameter/2;
-        [positions, radii] = cleanRats(positions, radii, scalBoxHeightY, scalBoxWidthX);
-        vecPosX = positions(:,1);
-        vecPosY = positions(:,2);
+        if is3D
+            positions = [vecPosX, vecPosY, vecPosZ];
+            radii     = vecDiameter / 2;
+            [positions, radii] = cleanRats(positions, radii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, true);
+            vecPosX   = positions(:,1);
+            vecPosY   = positions(:,2);
+            vecPosZ   = positions(:,3);
+        else
+            positions = [vecPosX, vecPosY];
+            radii     = vecDiameter / 2;
+            [positions, radii] = cleanRats(positions, radii, scalBoxHeightY, scalBoxWidthX);
+            vecPosX   = positions(:,1);
+            vecPosY   = positions(:,2);
+        end
         vecDiameter = 2*radii;
         N  = length(vecPosX);
         display("cleaning rattlers");
@@ -142,31 +189,45 @@ try
 
 %% Build neighbor lists (CPU, done once)
     fprintf('[simMD] Building neighbor lists ...\n');
-    skin = 0;
-    Zn_list           = zeros(N, 1);
+    skin             = 0;
+    Zn_list          = zeros(N, 1);
     neighbor_list_all = cell(1, N);
     spring_list_all   = cell(1, N);
 
     for nn = 1:N
         neighbor_list_nn = [];
         spring_list_nn   = [];
+
         for mm = [1:nn-1, nn+1:N]
-            dvecY  = vecPosY(mm) - vecPosY(nn);
-            dvecY  = dvecY - round(dvecY/scalBoxHeightY)*scalBoxHeightY;
-            Dnm = (1+skin)*(vecDiameter(nn)+vecDiameter(mm))/2;
-            if abs(dvecY) <= Dnm
-                dvecX  = vecPosX(mm) - vecPosX(nn);
-                dnm = dvecX^2 + dvecY^2;
+            Dnm = (1 + skin) * (vecDiameter(nn) + vecDiameter(mm)) / 2;
+
+            % y periodic
+            dvecY = vecPosY(mm) - vecPosY(nn);
+            dvecY = dvecY - round(dvecY / scalBoxHeightY) * scalBoxHeightY;
+
+            % z periodic (3D only)
+            if is3D
+                dvecZ = vecPosZ(mm) - vecPosZ(nn);
+                dvecZ = dvecZ - round(dvecZ / scalBoxDepthZ) * scalBoxDepthZ;
+            else
+                dvecZ = 0;
+            end
+
+            if abs(dvecY) <= Dnm && abs(dvecZ) <= Dnm
+                dvecX = vecPosX(mm) - vecPosX(nn);
+                dnm   = dvecX^2 + dvecY^2 + dvecZ^2;
                 if dnm < Dnm^2
                     neighbor_list_nn = [neighbor_list_nn, mm];         %#ok<AGROW>
                     spring_list_nn   = [spring_list_nn,   sqrt(dnm)];  %#ok<AGROW>
                 end
             end
         end
+
         neighbor_list_all{nn} = neighbor_list_nn;
         spring_list_all{nn}   = spring_list_nn;
         Zn_list(nn)           = length(spring_list_nn);
     end
+
     fprintf('[simMD] Neighbor lists built.\n');
 
 %% Convert cell lists → flat edge vectors (enables full GPU vectorization)
@@ -212,6 +273,11 @@ try
     Ek     = zeros(Nt, 1);
     Ep     = zeros(Nt, 1);
     g      = 0;
+    if is3D
+        vecPosZ0 = vecPosZ;
+        az_old   = zeros(N, 1);
+        vz       = zeros(N, 1);
+    end
 
 %% Full-spectrum trajectory storage
     if options.fullSpectrum
@@ -227,11 +293,18 @@ try
 
     dft_x           = complex(zeros(N, 1));
     dft_y           = complex(zeros(N, 1));
+    if is3D
+        dft_z       = complex(zeros(N, 1));
+    end
     n_dft_samples   = zeros(N, 1);
     running_sum_x   = zeros(N, 1);
     running_sum_y   = zeros(N, 1);
     running_sumsq_x = zeros(N, 1);
     running_sumsq_y = zeros(N, 1);
+    if is3D
+        running_sum_z   = zeros(N, 1);
+        running_sumsq_z = zeros(N, 1);
+    end
 
 %% DFT trigger parameters
     T_period_int             = round(2*pi / (w_D * dt));
@@ -296,6 +369,12 @@ try
         Ep     = gpuArray(Ep);
         inv_mass = gpuArray(inv_mass);
         mass_g = gpuArray(mass);
+        if is3D
+            vecPosZ    = gpuArray(vecPosZ);
+            vecPosZ0_g = gpuArray(vecPosZ0);
+            vz         = gpuArray(vz);
+            az_old     = gpuArray(az_old);
+        end
 
         % Edge list — transferred once, read every timestep
         src_flat = gpuArray(src_flat);
@@ -310,6 +389,11 @@ try
         running_sum_y   = gpuArray(running_sum_y);
         running_sumsq_x = gpuArray(running_sumsq_x);
         running_sumsq_y = gpuArray(running_sumsq_y);
+        if is3D
+            dft_z           = gpuArray(dft_z);
+            running_sum_z   = gpuArray(running_sum_z);
+            running_sumsq_z = gpuArray(running_sumsq_z);
+        end
 
         % DFT trigger arrays
         dft_active          = gpuArray(dft_active);
@@ -334,6 +418,9 @@ try
         mass_g = mass;
         vecPosX0_g     = vecPosX0;
         vecPosY0_g     = vecPosY0;
+        if is3D
+            vecPosZ0_g = vecPosZ0;
+        end
         left_wall_idx_g  = left_wall_idx;
         right_wall_idx_g = right_wall_idx;
     end
@@ -359,6 +446,9 @@ try
         % ── Verlet step 1: update positions ──────────────────────────────
         vecPosX = vecPosX + vx.*dt + ax_old.*dt2_half;
         vecPosY = vecPosY + vy.*dt + ay_old.*dt2_half;
+        if is3D
+            vecPosZ = vecPosZ + vz.*dt + az_old.*dt2_half;
+        end
 
         % ── Forced wall displacements ─────────────────────────────────────
         t_now = nt * dt;
@@ -390,34 +480,61 @@ try
         % Gather src and dst positions/velocities (single indexed read each)
         xs  = vecPosX(src_flat);    ys  = vecPosY(src_flat);
         xd  = vecPosX(dst_flat);    yd  = vecPosY(dst_flat);
-        vxs = vx(src_flat);   vys = vy(src_flat);
-        vxd = vx(dst_flat);   vyd = vy(dst_flat);
+        vxs = vx(src_flat);         vys = vy(src_flat);
+        vxd = vx(dst_flat);         vyd = vy(dst_flat);
 
-        % Displacement vector with periodic boundary in y
+        if is3D
+            zs  = vecPosZ(src_flat);
+            zd  = vecPosZ(dst_flat);
+            vzs = vz(src_flat);
+            vzd = vz(dst_flat);
+        else
+            zs = 0; zd = 0; vzs = 0; vzd = 0;
+        end
+
+        % Displacement vector with periodic boundary in y (and z if 3D)
         dxv = xd - xs;
         dyv = yd - ys;
-        dyv = dyv - round(dyv./scalBoxHeightY).*scalBoxHeightY;
+        dyv = dyv - round(dyv ./ scalBoxHeightY) .* scalBoxHeightY;
+
+        if is3D
+            dzv = zd - zs;
+            dzv = dzv - round(dzv ./ scalBoxDepthZ) .* scalBoxDepthZ;
+        else
+            dzv = 0;
+        end
 
         % Distance and spring force magnitude
-        dnm  = sqrt(dxv.^2 + dyv.^2);
-        Fmag = -K .* (D0_flat./dnm - 1);
+        dnm  = sqrt(dxv.^2 + dyv.^2 + dzv.^2);
+        Fmag = -K .* (D0_flat ./ dnm - 1);
 
         % Damping
         dvxv = vxs - vxd;
         dvyv = vys - vyd;
+        dvzv = vzs - vzd;
 
         % Per-edge force and potential energy
-        Fx_edge = Fmag.*dxv - Bv.*dvxv;
-        Fy_edge = Fmag.*dyv - Bv.*dvyv;
-        Ep_edge = 0.5*K.*(D0_flat - dnm).^2;
+        Fx_edge = Fmag .* dxv - Bv .* dvxv;
+        Fy_edge = Fmag .* dyv - Bv .* dvyv;
+        if is3D
+            Fz_edge = Fmag .* dzv - Bv .* dvzv;
+        end
+
+        Ep_edge = 0.5 * K .* (D0_flat - dnm).^2;
 
         % Scatter-add: sum edge contributions per source particle
         Fx = accumarray(src_flat, Fx_edge, [N, 1]);
         Fy = accumarray(src_flat, Fy_edge, [N, 1]);
+        if is3D
+            Fz = accumarray(src_flat, Fz_edge, [N, 1]);
+        end
 
         % Global background damping (B=0 by default, kept for generality)
         Fx = Fx - B.*vx;
         Fy = Fy - B.*vy;
+        if is3D
+            Fz = Fz - B.*vz;
+        end
 
         % Wall particles are kinematically driven — zero their forces
         Fx(left_wall_idx_g)  = 0;
@@ -426,26 +543,41 @@ try
         % Energy (Ep /2 because each undirected pair appears twice in edge list)
         Ep(nt) = sum(Ep_edge) / (2*N);
         % Ek(nt) = (0.5*M * sum(vx.^2 + vy.^2)) / N;
-        Ek(nt) = (0.5 * sum(mass_g .* (vx.^2 + vy.^2))) / N;
+        if is3D
+            Ek(nt) = (0.5 * sum(mass_g .* (vx.^2 + vy.^2 + vz.^2))) / N;
+        else
+            Ek(nt) = (0.5 * sum(mass_g .* (vx.^2 + vy.^2))) / N;
+        end
 
         % ── Accelerations ────────────────────────────────────────────────
         % ax = Fx .* inv_M;
         % ay = Fy .* inv_M - g;
         ax = Fx .* inv_mass;
         ay = Fy .* inv_mass - g;
+        if is3D
+            az = Fz .* inv_mass;
+        end
 
-        % ── Verlet step 2: update velocities ─────────────────────────────
         vx = vx + (ax_old + ax) .* dt_half;
         vy = vy + (ay_old + ay) .* dt_half;
+        if is3D
+            vz = vz + (az_old + az) .* dt_half;
+        end
 
         ax_old = ax;
         ay_old = ay;
+        if is3D
+            az_old = az;
+        end
 
         % ── DFT accumulation ─────────────────────────────────────────────
         % if GPU is used,  vecPosX and vecPosX0_g were transfered to the GPU
         % so disp_x is created on the GPU
         disp_x = vecPosX - vecPosX0_g; % [N x 1]
         disp_y = vecPosY - vecPosY0_g;
+        if is3D
+            disp_z = vecPosZ - vecPosZ0_g;
+        end
 
         % ── Full-spectrum trajectory recording  ─────────────────
           %       traj_disp_x  =  N × Nt  matrix
@@ -486,15 +618,22 @@ try
         end
 
         active_mask = double(dft_active & (nt >= nt_dft_on) & (nt <= nt_dft_end));
-        twiddle     = exp(-1i * w_D * (nt-1) * dt);   % scalar, no GPU overhead
+        twiddle     = exp(-1i * w_D * (nt-1) * dt);   % scalar
 
         dft_x           = dft_x           + disp_x .* active_mask .* twiddle;
         dft_y           = dft_y           + disp_y .* active_mask .* twiddle;
+        if is3D
+            dft_z       = dft_z           + disp_z .* active_mask .* twiddle;
+        end
         n_dft_samples   = n_dft_samples   + active_mask;
         running_sum_x   = running_sum_x   + vecPosX .* active_mask;
         running_sum_y   = running_sum_y   + vecPosY .* active_mask;
         running_sumsq_x = running_sumsq_x + vecPosX.^2 .* active_mask;
         running_sumsq_y = running_sumsq_y + vecPosY.^2 .* active_mask;
+        if is3D
+            running_sum_z   = running_sum_z   + vecPosZ .* active_mask;
+            running_sumsq_z = running_sumsq_z + vecPosZ.^2 .* active_mask;
+        end
 
         % ── Max-amplitude tracking (optional) ────────────────────────────
         if options.maxAmpTracking
@@ -538,6 +677,11 @@ try
         running_sum_y   = gather(running_sum_y);
         running_sumsq_x = gather(running_sumsq_x);
         running_sumsq_y = gather(running_sumsq_y);
+        if is3D
+            dft_z           = gather(dft_z);
+            running_sum_z   = gather(running_sum_z);
+            running_sumsq_z = gather(running_sumsq_z);
+        end
         dft_active      = gather(dft_active);
         nt_dft_start    = gather(nt_dft_start);
         Ek              = gather(Ek);
@@ -558,19 +702,29 @@ try
 
 
 %% DFT normalization
-    safe_n = max(n_dft_samples, 1); % clamp to 1 to avoid dividing by 0 for non-active particles
-    dft_x  = dft_x ./ safe_n; % we zero-them out anyways in dft_x(~valid) = 0
+    safe_n = max(n_dft_samples, 1);
+    dft_x  = dft_x ./ safe_n;
     dft_y  = dft_y ./ safe_n;
+    if is3D
+        dft_z  = dft_z ./ safe_n;
+    end
     var_x  = running_sumsq_x ./ safe_n - (running_sum_x ./ safe_n).^2;
     var_y  = running_sumsq_y ./ safe_n - (running_sum_y ./ safe_n).^2;
+    if is3D
+        var_z = running_sumsq_z ./ safe_n - (running_sum_z ./ safe_n).^2;
+    end
     clear running_sum_x running_sum_y running_sumsq_x running_sumsq_y;
+    if is3D
+        clear running_sum_z running_sumsq_z;
+    end
 
     min_cycles = 5;
-    % T_period_int = timesteps / period
     valid      = n_dft_samples >= min_cycles * T_period_int;
     dft_x(~valid) = 0; 
     dft_y(~valid) = 0;
-
+    if is3D
+        dft_z(~valid) = 0;
+    end
     fprintf('[simMD] DFT normalized; active: %d / %d, passing min_cycles=%d: %d / %d.\n', ...
         sum(dft_active), N, min_cycles, sum(valid), N);
     clear n_dft_samples safe_n valid;
@@ -766,6 +920,49 @@ try
     amplitude_vector_y   = amplitude_vector;
     cleaned_particle_index_y = cleaned_particle_index;
 
+    % ── Z direction ──────────────────────────────────────────────────────
+    posY_for_DFT = vecPosY0;
+    if is3D
+        posZ_for_DFT = vecPosZ0;
+    else
+        posZ_for_DFT = vecPosY0;  % fallback for 2D
+    end
+    if is3D
+        fprintf('[simMD] DFT processing Z direction ...\n');
+        [~, index_particles]              = sort(vecPosZ0);
+        initial_distance_from_oscillation = vecPosX0;
+
+        [fitted_attenuation, wavenumber, attenuation_fit_line, ...
+         initial_distance_from_oscillation_output, amplitude_vector, ...
+         unwrapped_phase_vector, cleaned_particle_index, ...
+         z_fft_initial_y, z_fft_initial_z] = ...
+            processDFT(dft_z, var_z, driving_amplitude, index_particles, ...
+                           index_oscillating_wall, initial_distance_from_oscillation, posY_for_DFT, posZ_for_DFT);
+
+        if isempty(cleaned_particle_index)
+            fprintf('Simulation P=%d, Omega=%d, Gamma=%d, Seed=%d did not detect attenuation in z-direction\n', P, w_D, Bv, seed);
+        end
+
+        attenuation_z          = fitted_attenuation;
+        attenuation_fit_line_z = attenuation_fit_line;
+        wavenumber_z           = wavenumber;
+        unwrapped_phase_vector_z = unwrapped_phase_vector;
+        amplitude_vector_z     = amplitude_vector;
+        cleaned_particle_index_z = cleaned_particle_index;
+        wavespeed_z            = driving_frequency * 2*pi*sqrt(mass_particle_average/K) / wavenumber_z;
+        initial_distance_from_oscillation_output_z_fft = initial_distance_from_oscillation_output;
+    else
+        attenuation_z                  = NaN;
+        attenuation_fit_line_z         = [];
+        wavenumber_z                   = NaN;
+        unwrapped_phase_vector_z       = [];
+        amplitude_vector_z             = [];
+        cleaned_particle_index_z       = [];
+        wavespeed_z                    = NaN;
+        initial_distance_from_oscillation_output_z_fft = [];
+        z_fft_initial_y                = [];
+        z_fft_initial_z                = [];
+    end
 %% Max-amplitude plots (optional)
     if options.maxAmpTracking
         vecPosX0_col = vecPosX0(:);
@@ -853,24 +1050,49 @@ try
     driving_angular_frequency_dimensionless = w_D * sqrt(mass_particle_average/K);
     gamma_dimensionless                     = Bv / sqrt(K * mass_particle_average);
     pressure_dimensionless                  = P;
+    if is3D
+        attenuation_z_dimensionless = attenuation_z * diameter_average;
+        wavenumber_z_dimensionless  = wavenumber_z  * diameter_average;
+    end
 
 %% Save
     fprintf('[simMD] Saving output to: %s\n', save_path);
 
-    save(save_path, ...
+    if is3D
+            save(save_path, ...
         'gamma_dimensionless', 'index_particles', ...
         'attenuation_x_dimensionless', 'attenuation_y_dimensionless', ...
+        'attenuation_z_dimensionless', ...
         'wavenumber_x_dimensionless',  'wavenumber_y_dimensionless', ...
-        'wavespeed_x', 'wavespeed_y', ...
+        'wavenumber_z_dimensionless', ...
+        'wavespeed_x', 'wavespeed_y', 'wavespeed_z', ...
         'driving_angular_frequency_dimensionless', ...
         'attenuation_fit_line_x', ...
         'initial_distance_from_oscillation_output_x_fft', ...
         'initial_distance_from_oscillation_output_y_fft', ...
-        'amplitude_vector_x', 'amplitude_vector_y', ...
+        'initial_distance_from_oscillation_output_z_fft', ...
+        'amplitude_vector_x', 'amplitude_vector_y', 'amplitude_vector_z', ...
         'pressure_dimensionless', 'seed', 'input_pressure', ...
-        'unwrapped_phase_vector_x', 'unwrapped_phase_vector_y', ...
+        'unwrapped_phase_vector_x', 'unwrapped_phase_vector_y', 'unwrapped_phase_vector_z', ...
         'x_fft_initial_y', 'x_fft_initial_z', ...
-        'y_fft_initial_y', 'y_fft_initial_z');
+        'y_fft_initial_y', 'y_fft_initial_z', ...
+        'z_fft_initial_y', 'z_fft_initial_z');
+    else
+        save(save_path, ...
+            'gamma_dimensionless', 'index_particles', ...
+            'attenuation_x_dimensionless', 'attenuation_y_dimensionless', ...
+            'wavenumber_x_dimensionless',  'wavenumber_y_dimensionless', ...
+            'wavespeed_x', 'wavespeed_y', ...
+            'driving_angular_frequency_dimensionless', ...
+            'attenuation_fit_line_x', ...
+            'initial_distance_from_oscillation_output_x_fft', ...
+            'initial_distance_from_oscillation_output_y_fft', ...
+            'amplitude_vector_x', 'amplitude_vector_y', ...
+            'pressure_dimensionless', 'seed', 'input_pressure', ...
+            'unwrapped_phase_vector_x', 'unwrapped_phase_vector_y', ...
+            'x_fft_initial_y', 'x_fft_initial_z', ...
+            'y_fft_initial_y', 'y_fft_initial_z');
+    end
 
     if options.fullSpectrum
         save(save_path, 'freq_axis', 'spec_x', 'spec_y', '-append');
