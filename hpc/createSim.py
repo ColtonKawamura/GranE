@@ -31,15 +31,15 @@ def main():
     # Parameter grids (mirror CreatePack.py: one .mat file per combination)
     K_values        = [100]
     M_values        = [1]
-    Bv_values       = [1]
-    w_D_values      = [1.28]
-    N_values        = [100]
-    P_values        = [0.1]
+    Bv_values       = [1, 0.3, 0.1, 0.03, 0.01]
+    w_D_values      = [10, 3, 1, .3, .1]
+    N_values        = [160000]
+    P_values        = [0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
     W_values        = [10]
     seed_values     = [1]
 
-    in_path  = "./data/packings/2d/hooke/"
-    out_path = "./data/simMD/2d/hooke/"
+    in_path  = "./data/packings/3d/hooke/"
+    out_path = "./data/simMD/3d/hooke/"
 
     shear          = False
     fullSpectrum   = False
