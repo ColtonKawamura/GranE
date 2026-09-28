@@ -26,7 +26,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             'scalGammaNormal', 0, ...
             'scalGammaTangential', 0, ...
             'saveFrictionalState', false, ...
-            'saveFullState', false)
+            'saveFullState', true)
     end
 
      % Backfill any option fields a caller omitted so both the frictionless
@@ -53,7 +53,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         options.saveFrictionalState = false;
     end
     if ~isfield(options, 'saveFullState')
-        options.saveFullState = false;
+        options.saveFullState = true;
     end
 
     % check to see if 3d path is needed
