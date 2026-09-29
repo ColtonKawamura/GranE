@@ -65,7 +65,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         options.visPackSkip = 2000;       % loop steps between sampled frames
     end
     if ~isfield(options, 'visPackRes')
-        options.visPackRes = 160;         % frame height in px (width = 2x)
+        options.visPackRes = 480;         % frame height in px (width = 2x)
     end
     if ~isfield(options, 'visPackMaxFrames')
         options.visPackMaxFrames = 60;    % cap on frames (bounds memory)
@@ -877,7 +877,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                             theta = vecTheta(i);
                             line([vecPosX(i) - r*cos(theta); vecPosX(i) + r*cos(theta)], ...
                                 [vecPosY(i) - r*sin(theta); vecPosY(i) + r*sin(theta)], ...
-                                'Color', 'r', 'LineWidth', 1.2);
+                                'Color', 'r', 'LineWidth', 2.0);
                         end
                     end
                     hold off;
