@@ -95,6 +95,17 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
                 save_path, N, num2str(P_target), scalRoundedWidth, seed);
         end
+        % Full-state (pre-cleanRats) filename for the repeat-tile source file.
+        % Mirrors the 3D block above so saveFullState works for 2D too; the
+        % per-step box rescalings wrap positions into [0, L), so the state is
+        % in-box and the 2D tiler reproduces it exactly across tile boundaries.
+        if options.hertzian
+            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        else
+            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        end
     end
     if isfile(strFilename)
         fprintf('Packing already exists, skipping: %s\n', strFilename);
