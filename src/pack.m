@@ -55,6 +55,26 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     if ~isfield(options, 'saveFullState')
         options.saveFullState = true;
     end
+    if ~isfield(options, 'flagVisPack')
+        options.flagVisPack = false;
+    end
+    if ~isfield(options, 'visPackFormat')
+        options.visPackFormat = 'auto';   % 'auto' = pick the smaller of MP4/GIF
+    end
+    if ~isfield(options, 'visPackSkip')
+        options.visPackSkip = 2000;       % loop steps between sampled frames
+    end
+    if ~isfield(options, 'visPackRes')
+        options.visPackRes = 160;         % frame height in px (width = 2x)
+    end
+    if ~isfield(options, 'visPackMaxFrames')
+        options.visPackMaxFrames = 60;    % cap on frames (bounds memory)
+    end
+    %% Visualize-pack frame buffer (allocated in-place when flagVisPack is on).
+    %% Not touched for non-visualized runs, so those stay bit-identical.
+    visPackImages     = {};   % collected RGB frames
+    visPackFrameCount = 0;    % number of frames captured so far
+    visPackSkip       = options.visPackSkip;     % loop steps between frames
 
     % check to see if 3d path is needed
     boolThreeD = (z_mult ~= 0);
@@ -217,6 +237,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             %%   scalGammaTangential = tangential dashpot prefactor (optional).
             %%   boolSaveFricState   = export fricState sidecar .mat before cleanRats.
     boolFrictionOn          = options.flagFrictionOn;
+    boolVisPackCapture      = options.flagVisPack && ~boolThreeD;  % 2D: capture frames to watch compression
+    boolVisPackRotate       = boolVisPackCapture && boolFrictionOn; % friction: also spin-draw orientation line
     scalMu                  = options.scalFricCoef;
     scalKtOverK             = options.scalTangentialK;
     scalKt                  = K * scalKtOverK;
@@ -304,6 +326,17 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     if boolFrictionOn
         vecOmega       = zeros(N, 1);
         vecAlphaPrev   = zeros(N, 1);
+    end
+
+    %% Rotation-angle tracking (visualize-pack only). vecTheta is the
+    %% integrated orientation angle of each disk, drawn as a diameter line in
+    %% the flagVisPack video. Only allocated when flagVisPack is requested for
+    %% a 2D packing with friction (the only case where disks actually rotate —
+    %% a frictionless run has vecTheta unused). This gating is what keeps
+    %% non-visualized / frictionless runs free of the extra per-particle memory.
+    if boolVisPackRotate
+        vecTheta        = zeros(N, 1);
+        vecOmegaTheta   = zeros(N, 1);  % omega at previous step, trapezoidal theta
     end
 
 
@@ -800,6 +833,61 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         if boolFrictionActive && ~boolThreeD
             vecOmega(boolRattler)       = 0;
             vecAlphaPrev(boolRattler)   = 0;
+        end
+
+        %% Integrate per-particle orientation angle for the visualize-pack
+        %% video (only when flagVisPack + 2D + friction). Trapezoidal update
+        %% from the finalized vecOmega of this step. vecTheta is only alive
+        %% when boolVisPackRotate, so this block never runs otherwise and the
+        %% non-visualized path keeps its original arithmetic untouched.
+        if boolVisPackRotate
+            vecTheta   = vecTheta + 0.5 * (vecOmegaTheta + vecOmega) .* scalTimestep;
+            vecOmegaTheta = vecOmega;
+        end
+
+        %% Capture a video frame for flagVisPack (2D only). Frames are drawn
+        %% for every 2D packing so the whole compression trajectory is visible,
+        %% not just the frictional phase. Gated on boolVisPackCapture so the
+        %% frictionless and 3D pathways stay bit-identical to the original
+        %% pack.m. We sample every visPackSkip loop steps, capped at
+        %% visPackMaxFrames frames. A 2D disk of diameter d is drawn as a
+        %% filled circle plus (only when friction is on, boolVisPackRotate) a
+        %% diameter line at angle vecTheta(i) so particle rotation is visible
+        %% as the packing compresses.
+        if boolVisPackCapture
+            if mod(nt, visPackSkip) == 0
+                visPackFrameCount = visPackFrameCount + 1;
+                if visPackFrameCount <= options.visPackMaxFrames
+                    clf;
+                    ax = axes('Units','pixels','Position',[0 0 (2*options.visPackRes) options.visPackRes]);
+                    axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
+                    box on; hold on;
+                    for i = 1:numel(vecPosX)
+                        r = vecDiameter(i)/2;
+                        th = linspace(0, 2*pi, 32);
+                        xcirc = vecPosX(i) + r*cos(th);
+                        ycirc = vecPosY(i) + r*sin(th);
+                        patch('XData', xcirc, 'YData', ycirc, ...
+                            'FaceColor', [0.85 0.88 1.0], 'EdgeColor', [0 0 0]);
+                        % orientation marker: a diameter line whose angle tracks
+                        % the integrated rotation vecTheta(i). Only drawn when
+                        % friction is on, since only frictional disks actually
+                        % rotate (the frictionless path never allocates vecTheta).
+                        if boolVisPackRotate
+                            theta = vecTheta(i);
+                            line([vecPosX(i) - r*cos(theta); vecPosX(i) + r*cos(theta)], ...
+                                [vecPosY(i) - r*sin(theta); vecPosY(i) + r*sin(theta)], ...
+                                'Color', 'r', 'LineWidth', 1.2);
+                        end
+                    end
+                    hold off;
+                    frame = getframe(ax);
+                    img = imresize(frame.cdata, [options.visPackRes 2*options.visPackRes]);
+                    visPackImages{visPackFrameCount} = img;
+                    fprintf('[visPack] frame %d/%d captured at step %d (Lx=%.3f)\n', ...
+                        visPackFrameCount, options.visPackMaxFrames, nt, scalBoxWidthX);
+                end
+            end
         end
 
 
@@ -1607,6 +1695,68 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
 
     toc
+
+    %% Assemble the collected flagVisPack frames into an MP4 or GIF.
+    %% Only runs when flagVisPack requested a 2D packing and more than one
+    %% frame was captured; otherwise it is a no-op — non-visualized runs
+    %% write no video and allocate nothing beyond the two empty buffers above.
+    %% When options.visPackFormat == 'auto', the smaller of MP4/GIF is chosen
+    %% by size (MP4 almost always wins); a caller can force 'gif' or 'mp4'.
+    if options.flagVisPack && ~boolThreeD && numel(visPackImages) > 1
+        try
+            nFrames = numel(visPackImages);
+            H = size(visPackImages{1}, 1);
+            W = size(visPackImages{1}, 2);
+            % Rough byte estimate per format (used only for the 'auto' choice):
+            %   GIF ~ 3 * H * W * nFrames (indexed, palette small per frame)
+            %   MP4 ~ a few k * nFrames for this low-motion content
+            estGif = 3 * H * W * nFrames;
+            estMp4 = 2048 * nFrames;
+            if strcmpi(options.visPackFormat, 'auto')
+                if estGif < estMp4
+                    outExt = 'gif';
+                else
+                    outExt = 'mp4';
+                end
+            else
+                outExt = lower(options.visPackFormat);
+            end
+            vidName = [strFilename(1:end-4) '_VisPack.' outExt];
+            if strcmpi(outExt, 'mp4')
+                vid = VideoWriter(vidName, 'MPEG-4');
+                vid.FrameRate = 10;
+                open(vid);
+                for fi = 1:numel(visPackImages)
+                    writeVideo(vid, visPackImages{fi});
+                end
+                close(vid);
+                fprintf('Visualize-pack video (MP4) saved to: %s (%d frames)\n', vidName, nFrames);
+            elseif strcmpi(outExt, 'gif')
+                % GIF: encode each RGB frame to an indexed image with its own
+                % palette, then append frames with imwrite's WriteMode='append'
+                % (frame 1 uses SaveAs to create the file).
+                [X, cmap] = rgb2ind(visPackImages{1}, 64, 'nodither');
+                imwrite(X, cmap, vidName, 'DelayTime', 0.1);
+                for fi = 2:numel(visPackImages)
+                    [X, cmap] = rgb2ind(visPackImages{fi}, 64, 'nodither');
+                    imwrite(X, cmap, vidName, 'DelayTime', 0.1, 'WriteMode', 'append');
+                end
+                fprintf('Visualize-pack video (GIF) saved to: %s (%d frames)\n', vidName, nFrames);
+            else
+                warning('pack:BadVisPackFormat', 'Unknown visPackFormat "%s"; using MP4.', num2str(options.visPackFormat));
+                vid = VideoWriter(vidName, 'MPEG-4');
+                vid.FrameRate = 10;
+                open(vid);
+                for fi = 1:numel(visPackImages)
+                    writeVideo(vid, visPackImages{fi});
+                end
+                close(vid);
+                fprintf('Visualize-pack video (MP4) saved to: %s (%d frames)\n', vidName, nFrames);
+            end
+        catch ME
+            warning('pack:VideoExportFailed', 'Could not export visualize-pack video: %s', ME.message);
+        end
+    end
 end
 
     function snap = capturePackingState( ...
