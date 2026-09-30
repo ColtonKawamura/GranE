@@ -27,4 +27,16 @@ simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPr
 scalNumPart = 100;
 simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, struct('cleanRats', true, 'shear', false, 'maxAmpTracking', true))
 
+% ── Argument-validation smoke tests for the positional options struct ──
+% (mirrors src/pack.m's calling convention; see simMD.m arguments block)
+
+% 10-argument call: options should fall back to all defaults.
+simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath)
+
+% 11-argument call with an empty struct(): every field must be backfilled.
+simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, struct())
+
+% 11-argument call with a partial struct: missing fields must be backfilled.
+simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, struct('shear', true))
+
 
