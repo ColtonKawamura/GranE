@@ -1,5 +1,5 @@
 function simMD(K, M, Bv, w_D, N, P, W, seed, in_path, out_path, options)
-%   simMD(100, 1, 1, 1.28, 80000, 0.1, 40, 1, "in/2d_poly_20by20/", "out/junk_yard")
+%   simMD(100, 1, 1, 1.28, 80000, 0.1, 40, 1, "in/2d_poly_20by20/", "out/junk_yard", struct('shear', false))
 
     arguments
         K (1,1) double
@@ -12,13 +12,41 @@ function simMD(K, M, Bv, w_D, N, P, W, seed, in_path, out_path, options)
         seed (1,1) double
         in_path (1,1) string
         out_path (1,1) string
-        options.visSim          (1,1) logical = false
-        options.shear           (1,1) logical = false
-        options.cleanRats       (1,1) logical = false
-        options.plotProbes      (1,1) logical = false
-        options.maxAmpTracking  (1,1) logical = false
-        options.fullSpectrum    (1,1) logical = false
-        options.plotSpectrum    (1,1) logical = false
+        % options is passed as a plain positional struct (see pack.m). A
+        % fully-defaulted struct means the 10-argument calls get all fields,
+        % and a caller may pass a partial struct; missing fields are
+        % backfilled below.
+        options (1,1) struct = struct('visSim', false, ...
+            'shear', false, ...
+            'cleanRats', false, ...
+            'plotProbes', false, ...
+            'maxAmpTracking', false, ...
+            'fullSpectrum', false, ...
+            'plotSpectrum', false)
+    end
+
+    % Backfill any option fields a caller omitted so both the 10-arg call
+    % and 11-arg calls with a partial struct work.
+    if ~isfield(options, 'visSim')
+        options.visSim = false;
+    end
+    if ~isfield(options, 'shear')
+        options.shear = false;
+    end
+    if ~isfield(options, 'cleanRats')
+        options.cleanRats = false;
+    end
+    if ~isfield(options, 'plotProbes')
+        options.plotProbes = false;
+    end
+    if ~isfield(options, 'maxAmpTracking')
+        options.maxAmpTracking = false;
+    end
+    if ~isfield(options, 'fullSpectrum')
+        options.fullSpectrum = false;
+    end
+    if ~isfield(options, 'plotSpectrum')
+        options.plotSpectrum = false;
     end
 
 %% Logging
@@ -149,7 +177,14 @@ try
     vecDiameter = vecDiameter(:);
 
     % update masses based on diameter
-    mass = (pi/4) .* vecDiameter.^2;
+    % 2D: disk area (pi/4)*d^2. 3D: sphere volume (pi/6)*d^3. This matches
+    % matSpringDampMass.m, which uses the unit-ball volume
+    % pi^(dim/2)/gamma(dim/2+1) * r^dim.
+    if is3D
+        mass = (pi/6) .* vecDiameter.^3;
+    else
+        mass = (pi/4) .* vecDiameter.^2;
+    end
     inv_mass = 1 ./ mass;
     mass_particle_average = mean(mass);
 
@@ -451,6 +486,8 @@ try
         end
 
         % ── Forced wall displacements ─────────────────────────────────────
+        % Walls are kinematically driven in x (compression) or y (shear)
+        % only — there is no z-shear, so z is simply pinned in 3D.
         t_now = nt * dt;
         if options.shear
             vecPosX(left_wall_idx_g) = vecPosX0_g(left_wall_idx_g);
@@ -459,8 +496,14 @@ try
             vecPosX(left_wall_idx_g) = vecPosX0_g(left_wall_idx_g) + A*sin(w_D*t_now);
             vecPosY(left_wall_idx_g) = vecPosY0_g(left_wall_idx_g);
         end
+        if is3D
+            vecPosZ(left_wall_idx_g) = vecPosZ0_g(left_wall_idx_g);
+        end
         vecPosX(right_wall_idx_g) = vecPosX0_g(right_wall_idx_g);
         vecPosY(right_wall_idx_g) = vecPosY0_g(right_wall_idx_g);
+        if is3D
+            vecPosZ(right_wall_idx_g) = vecPosZ0_g(right_wall_idx_g);
+        end
 
         % ── Vectorized GPU force kernel ───────────────────────────────────
         %
@@ -539,6 +582,12 @@ try
         % Wall particles are kinematically driven — zero their forces
         Fx(left_wall_idx_g)  = 0;
         Fx(right_wall_idx_g) = 0;
+        Fy(left_wall_idx_g)  = 0;
+        Fy(right_wall_idx_g) = 0;
+        if is3D
+            Fz(left_wall_idx_g)  = 0;
+            Fz(right_wall_idx_g) = 0;
+        end
 
         % Energy (Ep /2 because each undirected pair appears twice in edge list)
         Ep(nt) = sum(Ep_edge) / (2*N);
@@ -562,6 +611,17 @@ try
         vy = vy + (ay_old + ay) .* dt_half;
         if is3D
             vz = vz + (az_old + az) .* dt_half;
+        end
+
+        % Walls are kinematically driven — zero their velocities so the
+        % Verlet position update doesn't drift wall particles between resets.
+        vx(left_wall_idx_g)  = 0;
+        vx(right_wall_idx_g) = 0;
+        vy(left_wall_idx_g)  = 0;
+        vy(right_wall_idx_g) = 0;
+        if is3D
+            vz(left_wall_idx_g)  = 0;
+            vz(right_wall_idx_g) = 0;
         end
 
         ax_old = ax;
@@ -678,9 +738,12 @@ try
         running_sumsq_x = gather(running_sumsq_x);
         running_sumsq_y = gather(running_sumsq_y);
         if is3D
-            dft_z           = gather(dft_z);
-            running_sum_z   = gather(running_sum_z);
-            running_sumsq_z = gather(running_sumsq_z);
+            vecPosZ          = gather(vecPosZ);
+            vecPosZ0         = gather(vecPosZ0_g);
+            vz               = gather(vz);
+            dft_z            = gather(dft_z);
+            running_sum_z    = gather(running_sum_z);
+            running_sumsq_z  = gather(running_sumsq_z);
         end
         dft_active      = gather(dft_active);
         nt_dft_start    = gather(nt_dft_start);
