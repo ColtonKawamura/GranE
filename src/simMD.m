@@ -613,17 +613,6 @@ try
             vz = vz + (az_old + az) .* dt_half;
         end
 
-        % Walls are kinematically driven — zero their velocities so the
-        % Verlet position update doesn't drift wall particles between resets.
-        vx(left_wall_idx_g)  = 0;
-        vx(right_wall_idx_g) = 0;
-        vy(left_wall_idx_g)  = 0;
-        vy(right_wall_idx_g) = 0;
-        if is3D
-            vz(left_wall_idx_g)  = 0;
-            vz(right_wall_idx_g) = 0;
-        end
-
         ax_old = ax;
         ay_old = ay;
         if is3D
@@ -918,7 +907,6 @@ try
 
 %% Post-processing
     fprintf('[simMD] Starting post-processing ...\n');
-    addpath('./src/matlab_functions');
 
     % ── X direction ──────────────────────────────────────────────────────
     fprintf('[simMD] DFT processing X direction ...\n');
