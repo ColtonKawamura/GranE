@@ -846,47 +846,71 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
 
         %% Capture a video frame for flagVisPack (2D only). Frames are drawn
-        %% for every 2D packing so the whole compression trajectory is visible,
-        %% not just the frictional phase. Gated on boolVisPackCapture so the
-        %% frictionless and 3D pathways stay bit-identical to the original
-        %% pack.m. We sample every visPackSkip loop steps, capped at
-        %% visPackMaxFrames frames. A 2D disk of diameter d is drawn as a
+        %% for every 2D packing so the whole compression trajectory is
+        %% visible, not just the frictional phase. Gated on boolVisPackCapture
+        %% so the frictionless and 3D pathways stay bit-identical to the
+        %% original pack.m. We sample every visPackSkip loop steps during the
+        %% long frictionless compression, but sample the brief fixed-box
+        %% frictional relaxation finely so the particle rotation that only
+        %% happens there is actually captured (sampling coarsely there would
+        %% leave every captured frame in the frictionless phase where
+        %% vecTheta == 0 and the red lines all look horizontal). Frames are
+        %% capped at visPackMaxFrames. A 2D disk of diameter d is drawn as a
         %% filled circle plus (only when friction is on, boolVisPackRotate) a
         %% diameter line at angle vecTheta(i) so particle rotation is visible
         %% as the packing compresses.
+        %%
+        %% Rendering: we capture the whole figure with getframe(fig), not
+        %% getframe(ax). The axes box is drawn at a 2:1 pixel size while the
+        %% data domain [0 Lx]x[0 Ly] is square. getframe(ax) snapshots only a
+        %% square sub-rectangle of that box, and imresize then stretches it
+        %% back to 2:1 -- which distorts the aspect ratio and skews/crops the
+        %% content to one edge (measured bbox of the old GIF was
+        %% [405,0,959,479] in a 960x480 frame, i.e. a 405px left margin). A
+        %% 2:1 figure captured whole and downsampled even keeps the aspect
+        %% ratio correct with no distortion.
         if boolVisPackCapture
-            if mod(nt, visPackSkip) == 0
+            if boolVisPackRotate && boolFrictionActive
+                % Frictional relaxation is a short fixed-box window at the end
+                % of the run. Sample it finely (visPackSkip/40 steps) so the
+                % rotation shows instead of being missed by a coarse skip.
+                visPackFs = max(1, round(visPackSkip / 40));
+            else
+                visPackFs = visPackSkip;
+            end
+            if mod(nt, visPackFs) == 0 && visPackFrameCount < options.visPackMaxFrames
                 visPackFrameCount = visPackFrameCount + 1;
-                if visPackFrameCount <= options.visPackMaxFrames
-                    clf;
-                    ax = axes('Units','pixels','Position',[0 0 (2*options.visPackRes) options.visPackRes]);
-                    axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
-                    box on; hold on;
-                    for i = 1:numel(vecPosX)
-                        r = vecDiameter(i)/2;
-                        th = linspace(0, 2*pi, 32);
-                        xcirc = vecPosX(i) + r*cos(th);
-                        ycirc = vecPosY(i) + r*sin(th);
-                        patch('XData', xcirc, 'YData', ycirc, ...
-                            'FaceColor', [0.85 0.88 1.0], 'EdgeColor', [0 0 0]);
-                        % orientation marker: a diameter line whose angle tracks
-                        % the integrated rotation vecTheta(i). Only drawn when
-                        % friction is on, since only frictional disks actually
-                        % rotate (the frictionless path never allocates vecTheta).
-                        if boolVisPackRotate
-                            theta = vecTheta(i);
-                            line([vecPosX(i) - r*cos(theta); vecPosX(i) + r*cos(theta)], ...
-                                [vecPosY(i) - r*sin(theta); vecPosY(i) + r*sin(theta)], ...
-                                'Color', 'r', 'LineWidth', 2.0);
-                        end
+                % Whole 2:1 figure; the axes fills it exactly, so getframe(fig)
+                % returns an even 2:1 region (no corner crop / stretch).
+                fig = figure('Visible','off','Position',[0 0 (2*options.visPackRes) options.visPackRes],'Color',[0 0 0]);
+                ax = axes('Units','pixels','Position',[0 0 (2*options.visPackRes) options.visPackRes],'Color',[0 0 0]);
+                axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
+                box on; hold on;
+                for i = 1:numel(vecPosX)
+                    r = vecDiameter(i)/2;
+                    th = linspace(0, 2*pi, 32);
+                    xcirc = vecPosX(i) + r*cos(th);
+                    ycirc = vecPosY(i) + r*sin(th);
+                    patch('XData', xcirc, 'YData', ycirc, ...
+                        'FaceColor', [0.85 0.88 1.0], 'EdgeColor', [0 0 0]);
+                    % orientation marker: a diameter line whose angle tracks
+                    % the integrated rotation vecTheta(i). Only drawn when
+                    % friction is on, since only frictional disks actually
+                    % rotate (the frictionless path never allocates vecTheta).
+                    if boolVisPackRotate
+                        theta = vecTheta(i);
+                        line([vecPosX(i) - r*cos(theta); vecPosX(i) + r*cos(theta)], ...
+                            [vecPosY(i) - r*sin(theta); vecPosY(i) + r*sin(theta)], ...
+                            'Color', 'r', 'LineWidth', 2.0);
                     end
-                    hold off;
-                    frame = getframe(ax);
-                    img = imresize(frame.cdata, [options.visPackRes 2*options.visPackRes]);
-                    visPackImages{visPackFrameCount} = img;
-                    fprintf('[visPack] frame %d/%d captured at step %d (Lx=%.3f)\n', ...
-                        visPackFrameCount, options.visPackMaxFrames, nt, scalBoxWidthX);
                 end
+                hold off;
+                frame = getframe(fig);
+                img = imresize(frame.cdata, [options.visPackRes 2*options.visPackRes]);
+                visPackImages{visPackFrameCount} = img;
+                close(fig);
+                fprintf('[visPack] frame %d/%d captured at step %d (Lx=%.3f)\n', ...
+                    visPackFrameCount, options.visPackMaxFrames, nt, scalBoxWidthX);
             end
         end
 
