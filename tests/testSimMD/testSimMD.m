@@ -19,12 +19,12 @@ stringOutPath = "~/repos/GranE/tests/testSimMD/data/";
 
 % this one should NOT detect attenuation
 % assert that it doesn't detect attenuation? How?
-simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, 'cleanRats', true, 'shear', false, 'maxAmpTracking', true)
+simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, struct('cleanRats', true, 'shear', false, 'maxAmpTracking', true))
 
 
 
 
 scalNumPart = 100;
-simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, 'cleanRats', true, 'shear', false, 'maxAmpTracking', true)
+simMD(scalSpringConst, scalMass, scalDamping, scalFreqDrive, scalNumPart, scalPressure, scalWidth, scalSeed, stringInPath, stringOutPath, struct('cleanRats', true, 'shear', false, 'maxAmpTracking', true))
 
 

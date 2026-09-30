@@ -3,13 +3,15 @@ import os
 def generate_matlab_command(
     K, M, Bv, w_D, N, P, W, seed,
     in_path, out_path,
-    shear, fullSpectrum, maxAmpTracking
+    shear, fullSpectrum, maxAmpTracking, cleanRats
 ):
     """Build one `matlab -r` command line that runs src/simMD.m for a single
     (packing, parameter) combination.
 
+    simMD's options argument is a positional struct (see src/simMD.m /
+    src/pack.m), so struct(...) is passed as the 11th positional argument.
     Only the requested flags are set; simMD's arguments block backfills the
-    rest to defaults. A single struct(...) call keeps the MATLAB line simple.
+    rest to defaults. An empty struct() is valid when no flags are set.
     """
     fields = []
     if shear:
@@ -18,13 +20,15 @@ def generate_matlab_command(
         fields.append("'fullSpectrum', true")
     if maxAmpTracking:
         fields.append("'maxAmpTracking', true")
+    if cleanRats:
+        fields.append("'cleanRats', true")
     options_str = "struct(" + ", ".join(fields) + ")"
 
     return (
         f"matlab -nodisplay -nosplash -r \"addpath('./src/'); try; "
         f"simMD({K}, {M}, {Bv}, {w_D}, {N}, {P}, {W}, {seed}, "
         f"'{in_path}', '{out_path}', {options_str}); "
-        f"catch e; disp(e.message); end; exit\""
+        f"catch e; disp(getReport(e)); end; exit\""
     )
 
 def main():
@@ -44,6 +48,7 @@ def main():
     shear          = False
     fullSpectrum   = False
     maxAmpTracking = False
+    cleanRats      = False
 
     output_file = os.path.join(os.path.dirname(__file__), "commandsSim.txt")
 
@@ -59,7 +64,7 @@ def main():
                                         command = generate_matlab_command(
                                             K, M, Bv, w_D, N, P, W, seed,
                                             in_path, out_path,
-                                            shear, fullSpectrum, maxAmpTracking
+                                            shear, fullSpectrum, maxAmpTracking, cleanRats
                                         )
                                         file.write(command + "\n")
 
