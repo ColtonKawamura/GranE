@@ -1477,12 +1477,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             % stored particles). Packing fraction is identical to the base
             % tile by construction; coordination number under full PBC equals
             % the base tile's full-state Zn (tiling replicates the contact
-            % network) — recomputed anyway via the shared function so the
-            % file is self-consistent with what it stores.
+            % network).
             scalPackingFractionTiled  = computePackingFraction(vecDiameterFinal, scalBoxWidthXTiled, scalBoxHeightYFinal, scalBoxDepthZFinal);
             scalPackingFractionFullTiled = scalPackingFractionTiled;
-            scalMeanCoordNumTiled = computeMeanCoordNum(vecPosXFinal, vecPosYFinal, vecDiameterFinal, ...
-                scalBoxWidthXTiled, scalBoxHeightYFinal, vecPosZFinal, scalBoxDepthZFinal);
+            % NOTE: the direct recompute on the tiled packing is ONLY for small
+            % packings used by the unit tests (tests/testPack/testPack.m).
+            % computeMeanCoordNum is O(N^2) in memory (N x N ndgrid), so for
+            % production-sized tilings (N > 1200; e.g. 1000 x 160 = 160000
+            % particles needs ~400 GB) it is skipped and the base tile's
+            % full-state Zn is used instead — exact under full PBC.
+            scalMaxNumForDirectCoordNum = 1200;
+            if scalNTiled <= scalMaxNumForDirectCoordNum
+                scalMeanCoordNumTiled = computeMeanCoordNum(vecPosXFinal, vecPosYFinal, vecDiameterFinal, ...
+                    scalBoxWidthXTiled, scalBoxHeightYFinal, vecPosZFinal, scalBoxDepthZFinal);
+            else
+                scalMeanCoordNumTiled = computeMeanCoordNum(vecTileSrcX, vecTileSrcY, vecTileSrcD, ...
+                    scalBoxWidthX, scalBoxHeightY, vecTileSrcZ, scalBoxDepthZ);
+            end
             fprintf('3D tiled packing: N=%d (of %d per tile), PF=%.4f, mean coordination number=%.4f\n', ...
                 scalNTiled, NTileSrc, scalPackingFractionTiled, scalMeanCoordNumTiled);
 
