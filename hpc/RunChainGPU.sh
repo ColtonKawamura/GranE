@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=3dSim
+#SBATCH --job-name=sim
 #SBATCH --output=/scratch/%u/matlab_logs/job_%A_%a.out
 #SBATCH --error=/scratch/%u/matlab_logs/job_%A_%a.out
 #SBATCH --array=1-3%3
