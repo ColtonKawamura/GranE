@@ -201,7 +201,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                                                % frozen-box convergence check
     scalCompressionRateFast = 0.01;
 
-    boolConverged = false; % only update plot after each compression step
     boolCellUpdateNeeded = true; % make sure to update cell list on first step
     boolFastCompressPhase = true;
     scalMeanCoordNum = NaN;  % initiated here so it exisits before the loop for echoing to screen
@@ -399,7 +398,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY);  % [scalNumCellsX x scalNumCellsY]
 
     %% Setup plotting
-    if plotit
+    % plotit shows only the packing, redrawn every scalPlotSkip steps: in
+    % figure 1, or for 2D frictional runs in the compression-GIF figure below
+    % (disks with a diameter line that shows rotation).
+    boolFricGif     = plotit && boolFrictionOn && ~boolThreeD;
+    boolPlotPacking = plotit && ~boolFricGif;
+    if boolPlotPacking
         figure(1), clf;
         hPlotHandles = gobjects(N, 1);  % [N x 1]
         for np = 1:N
@@ -410,7 +414,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 'Curvature', [1 1], 'EdgeColor', 'b');
         end
         axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
-        figure(2), clf;
+        hAxPacking = gca;
     end
 
     %% Frictional compression movie (2D, friction on, plotit = true)
@@ -419,7 +423,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     %  frame is appended to an animated GIF next to the .mat, so grain
     %  rotation and the approach to the converged packing can be checked by
     %  eye. vecTheta is only integrated while this movie is being recorded.
-    boolFricGif = plotit && boolFrictionOn && ~boolThreeD;
     if boolFricGif
         vecTheta = zeros(N, 1);          % [N x 1] rotation angle (rad, counter-clockwise +)
         strGifFilename = [strFilename(1:end-4) '_Fric_Compression.gif'];
@@ -452,26 +455,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             fprintf('  step %d | P=%.4e | P_target=%.4e | P/P_target=%.4f\n', ...
                 nt, scalPressure, P_target, scalPressure/P_target);
         end
-        boolConverged = false;
 
-        %% Plotting
-        if plotit && mod(nt, scalPlotSkip) == 0
-            if boolConverged
-                figure(1);
+        %% Plotting: redraw the packing
+        if boolPlotPacking && mod(nt, scalPlotSkip) == 0
+            % if the figure was closed, stop redrawing but keep packing
+            boolPlotPacking = all(ishandle(hPlotHandles));
+            if boolPlotPacking
                 for np = 1:N
                     set(hPlotHandles(np), 'Position', ...
                         [vecPosX(np) - 0.5*vecDiameter(np), ...
                          vecPosY(np) - 0.5*vecDiameter(np), ...
                          vecDiameter(np), vecDiameter(np)]);
                 end
-                ylim([0 scalBoxHeightY]); xlim([0 scalBoxWidthX]);
-                title(num2str(scalBoxHeightY));
+                axis(hAxPacking, [0 scalBoxWidthX 0 scalBoxHeightY]);
+                title(hAxPacking, sprintf('step %d, P/P_{target} = %.3f, L_y = %.4f', ...
+                    nt, scalPressure / P_target, scalBoxHeightY));
+                drawnow;
             end
-            figure(2);
-            semilogy(nt, vecKineticEnergyHistory(nt-1),   'ro'); hold on;
-            semilogy(nt, vecPotentialEnergyHistory(nt-1), 'bs');
-            plot(nt, scalPressure, 'kx');
-            drawnow;
         elseif boolPlotKE && mod(nt, scalPlotSkip) == 0
             figure(1), plot(vecPosX, vecPosY, 'k.'); drawnow;
         end
