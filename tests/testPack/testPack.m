@@ -1,6 +1,6 @@
 % this tests the pack.m function
-% matlab should be cd into ~/repos/ in order to run with:
-% run("GranE/tests/testPack/testPack.m")
+% matlab should be cd into ~/repos/GranE in order to run with:
+% run("tests/testPack/testPack.m")
 
 clear all
 
