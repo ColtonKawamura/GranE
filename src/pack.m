@@ -95,6 +95,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
                 save_path, N, num2str(P_target), scalRoundedWidth, seed);
         end
+        if options.hertzian
+            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        else
+            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
+                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+        end
     end
     if isfile(strFilename)
         fprintf('Packing already exists, skipping: %s\n', strFilename);
