@@ -232,7 +232,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
 %% Display / simulation parameters
     boolPlotKE = false;
-    scalPlotSkip = 1000;   % timesteps between plot updates
+    scalPlotSkip = 200;   % timesteps between plot updates
     scalCellUpdateInterval = 1;
 
     % time step should be 1/100 of a particle oscillation period
@@ -1828,7 +1828,9 @@ function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFra
         axis(hAx, 'equal');
         axis(hAx, [0 scalBoxWidthX 0 scalBoxHeightY]);
         box(hAx, 'on');
-        title(hAx, cellTitle);
+        ht = title(hAx, cellTitle, 'Interpreter', 'latex');
+        set(ht, 'Color', [0 0 0], 'FontWeight', 'bold', 'FontSize', 14);
+        drawnow;
         drawnow;
 
         imgFrame = getframe(hFig);
@@ -1842,15 +1844,14 @@ function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFra
         scalCols = min(vecFrameSize(2), size(imgFrame, 2));
         imgCanvas(1:scalRows, 1:scalCols, :) = imgFrame(1:scalRows, 1:scalCols, :);
 
-        % fixed 6x6x6 palette: index = r + 6g + 36b, levels 0..5 per channel
-        matLevel = round(double(imgCanvas) / 51);
-        imgIndexed = uint8(matLevel(:,:,1) + 6*matLevel(:,:,2) + 36*matLevel(:,:,3));
-        [cr, cg, cb] = ndgrid(0:5, 0:5, 0:5);
-        matColorMap = [cr(:), cg(:), cb(:)] / 5;
+        [imgIndexed, matColorMap] = rgb2ind(imgCanvas, 256);
         if boolFirstFrame
-            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', 'LoopCount', Inf, 'DelayTime', scalDelay);
+            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', ...
+                'LoopCount', Inf, 'DelayTime', scalDelay);
+            fprintf('Frictional compression GIF path: %s\n', strGifFilename);
         else
-            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', 'WriteMode', 'append', 'DelayTime', scalDelay);
+            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', ...
+                'WriteMode', 'append', 'DelayTime', scalDelay);
         end
     catch ME
         warning('pack:GIFExportFailed', ...
@@ -1861,9 +1862,14 @@ end
 
 function cellTitle = fricGifTitle(strLabel, nt, scalPressure, P_target, vecDiameter, ...
         scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu)
-% fricGifTitle -- Two-line frame title for the frictional compression GIF.
+
     scalPhi = sum(pi * vecDiameter.^2 / 4) / (scalBoxWidthX * scalBoxHeightY);
-    cellTitle = {sprintf('%s (\\mu = %.2f), step %d', strLabel, scalMu, nt), ...
-                 sprintf('P/P_{target} = %.3f   \\phi = %.4f   Z = %.2f', ...
-                         scalPressure / P_target, scalPhi, scalMeanCoordNum)};
+
+    cellTitle = { ...
+        sprintf('%s ($\\mu = %.2f$), step %d', ...
+                strLabel, scalMu, nt), ...
+        sprintf('$P/P_{\\mathrm{target}} = %.3f \\quad \\phi = %.4f \\quad Z = %.2f$', ...
+                scalPressure / P_target, scalPhi, scalMeanCoordNum) ...
+    };
 end
+
