@@ -149,18 +149,21 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalCompressionRate = P_target;
     %% Frictional (Cundall-Strack) compression protocol — 2D only.
     %%
-    %%
-    %%  Protocol (literature: OverDamp.cpp's Acc_max < Fthresh, Vinutha
-    %% & Sastry DEM relaxation "<|F_tot|> < threshold", Silbert et al. pressure-
-    %% controlled compression): drive the box only while P is outside a dead-band
-    %% around P_target (compress when loose, expand when dense), HOLD the box
-    %% while P is in-band, and accept only when the grains are in FORCE BALANCE —
-    %% max_i |F_net,i| < tol * mean_contact_force — sustained for several hundred
-    %% consecutive in-band steps, with a percolating contact network
-    %% (mean Zn >= scalFrictionZmin). Force balance is the physically correct
-    %% "settled" signal: a balanced packing has ~zero accelerations, so KE
-    %% decays and P becomes a smooth function of box size (no limit cycle).
-    scalFrictionRate         = 0.005;      % box change per step while P is outside the dead-band
+    %%  Friction is ON for the whole compression (no frictionless
+    %% pre-compression). The box is resized only once the grains have RELAXED
+    %% after the previous resize, so every decision reads a settled pressure
+    %% (the frictionless path likewise only compresses when Ek < 1e-8):
+    %% compress when P is below a dead-band around P_target, expand when P is
+    %% above it, HOLD while P is in-band. The strain step starts at the
+    %% frictionless fast rate and is HALVED every time the controller reverses
+    %% direction (it overshot P_target), i.e. a bisection on the box size, so
+    %% P lands in the band instead of bouncing across it. The old controller
+    %% resized by 0.5% every step while P was out of band; one such step moves
+    %% P by several P_target, which is the limit cycle of issue #16.
+    %%  Convergence (unchanged) requires FORCE BALANCE — max_i |F_net,i| < tol *
+    %% mean contact force — sustained for several hundred consecutive in-band
+    %% steps with the box held and a percolating contact network
+    %% (mean Zn >= scalFrictionZmin), as OverDamp.cpp's Acc_max < Fthresh.
     scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
     scalFrictionForceTol     = 0.01;        % accept when max|F_net|/mean|F_contact| < 1%
     scalFrictionBalCount      = 0;          % consecutive in-band steps satisfying force balance
@@ -168,15 +171,22 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
                                              % (frictional 2D isostatic z_iso = 3)
     scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase (safety only)
-    scalFrictionVelDecay      = 0.10;       % per-step velocity/omega decay for the frictional
-                                             % relaxation. Damping rate = decay/dt ~ 16 per
-                                             % time unit >> contact spring frequency sqrt(K/M)=10,
-                                             % so the Cundall-Strack springs and rotational DOF
-                                             % are OVERDAMPED: energy drains out instead of
-                                             % feeding the P limit-cycle. The renormalized drag
-                                             % above is a no-op at this dt (Bn*dt ~ 3e-3).
-                                             % Gated on boolFrictionOn: the frictionless path
-                                             % is untouched.
+    scalFrictionStrain        = 0.01;       % current box strain per resize (starts at the
+                                             % frictionless fast rate, halved on each reversal)
+    scalFrictionStrainMin     = 1e-2 * P_target;  % floor for the bisected strain step
+    scalFrictionRelaxSteps    = 100;        % minimum steps between resizes (one contact
+                                             % oscillation period: dt = period/100)
+    scalFrictionRelaxKE       = 1e-2;       % relaxed once kinetic energy per grain (incl.
+                                             % rotation) < this * elastic energy per grain at
+                                             % P_target, or once in force balance
+    scalFrictionLastDir       = 0;          % last resize: -1 compress, +1 expand, 0 none yet
+    scalFrictionLastResize    = 0;          % step of the last resize
+    % elastic energy per grain at which the pressure estimate below reads P_target
+    if options.hertzian
+        scalFrictionEpTarget = (2/5) * K * P_target^(5/2);
+    else
+        scalFrictionEpTarget = 0.5 * K * P_target^2;
+    end
     scalSlowConvSteps           = 20000;        % for the FRICTIONLESS slow phase:
                                               % consecutive steps the box must be
                                               % frozen (|Lx-Lx_prev| < 1e-8) to call
@@ -191,7 +201,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                                                % frozen-box convergence check
     scalCompressionRateFast = 0.01;
 
-    boolConverged = false; % only update plot after each compression step
     boolCellUpdateNeeded = true; % make sure to update cell list on first step
     boolFastCompressPhase = true;
     scalMeanCoordNum = NaN;  % initiated here so it exisits before the loop for echoing to screen
@@ -223,7 +232,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
 %% Display / simulation parameters
     boolPlotKE = false;
-    scalPlotSkip = 1000;   % timesteps between plot updates
+    scalPlotSkip = 200;   % timesteps between plot updates
     scalCellUpdateInterval = 1;
 
     % time step should be 1/100 of a particle oscillation period
@@ -389,7 +398,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY);  % [scalNumCellsX x scalNumCellsY]
 
     %% Setup plotting
-    if plotit
+    % plotit shows only the packing, redrawn every scalPlotSkip steps: in
+    % figure 1, or for 2D frictional runs in the compression-GIF figure below
+    % (disks with a diameter line that shows rotation).
+    boolFricGif     = plotit && boolFrictionOn && ~boolThreeD;
+    boolPlotPacking = plotit && ~boolFricGif;
+    if boolPlotPacking
         figure(1), clf;
         hPlotHandles = gobjects(N, 1);  % [N x 1]
         for np = 1:N
@@ -400,7 +414,23 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 'Curvature', [1 1], 'EdgeColor', 'b');
         end
         axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
-        figure(2), clf;
+        hAxPacking = gca;
+    end
+
+    %% Frictional compression movie (2D, friction on, plotit = true)
+    %  Every scalPlotSkip steps the packing is drawn with a line across each
+    %  disk's diameter at its accumulated rotation angle vecTheta, and the
+    %  frame is appended to an animated GIF next to the .mat, so grain
+    %  rotation and the approach to the converged packing can be checked by
+    %  eye. vecTheta is only integrated while this movie is being recorded.
+    if boolFricGif
+        vecTheta = zeros(N, 1);          % [N x 1] rotation angle (rad, counter-clockwise +)
+        strGifFilename = [strFilename(1:end-4) '_Fric_Compression.gif'];
+        hFigGif = figure('Color', 'w', 'Name', 'Frictional compression', 'Position', [100 100 600 640]);
+        vecGifFrameSize = [];            % [rows cols] of the first frame; later frames match it
+        [vecGifFrameSize, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
+            vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
+            fricGifTitle('Frictional compression', 0, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, 0, scalMu), 0.1);
     end
 
     %% Main time-integration loop
@@ -425,28 +455,30 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             fprintf('  step %d | P=%.4e | P_target=%.4e | P/P_target=%.4f\n', ...
                 nt, scalPressure, P_target, scalPressure/P_target);
         end
-        boolConverged = false;
 
-        %% Plotting
-        if plotit && mod(nt, scalPlotSkip) == 0
-            if boolConverged
-                figure(1);
+        %% Plotting: redraw the packing
+        if boolPlotPacking && mod(nt, scalPlotSkip) == 0
+            % if the figure was closed, stop redrawing but keep packing
+            boolPlotPacking = all(ishandle(hPlotHandles));
+            if boolPlotPacking
                 for np = 1:N
                     set(hPlotHandles(np), 'Position', ...
                         [vecPosX(np) - 0.5*vecDiameter(np), ...
                          vecPosY(np) - 0.5*vecDiameter(np), ...
                          vecDiameter(np), vecDiameter(np)]);
                 end
-                ylim([0 scalBoxHeightY]); xlim([0 scalBoxWidthX]);
-                title(num2str(scalBoxHeightY));
+                axis(hAxPacking, [0 scalBoxWidthX 0 scalBoxHeightY]);
+                title(hAxPacking, sprintf('step %d, P/P_{target} = %.3f, L_y = %.4f', ...
+                    nt, scalPressure / P_target, scalBoxHeightY));
+                drawnow;
             end
-            figure(2);
-            semilogy(nt, vecKineticEnergyHistory(nt-1),   'ro'); hold on;
-            semilogy(nt, vecPotentialEnergyHistory(nt-1), 'bs');
-            plot(nt, scalPressure, 'kx');
-            drawnow;
         elseif boolPlotKE && mod(nt, scalPlotSkip) == 0
             figure(1), plot(vecPosX, vecPosY, 'k.'); drawnow;
+        end
+        if boolFricGif && mod(nt, scalPlotSkip) == 0
+            [vecGifFrameSize, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
+                vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
+                fricGifTitle('Frictional compression', nt, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 0.1);
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -456,6 +488,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecPosY = vecPosY + vecVelY*scalTimestep + vecAccelYPrev.*(scalTimestep^2/2);
         if boolThreeD
             vecPosZ = vecPosZ + vecVelZ*scalTimestep + vecAccelZPrev.*(scalTimestep^2/2);
+        end
+        if boolFricGif
+            % rotation angle, same Verlet position step as x and y
+            vecTheta = vecTheta + vecOmega*scalTimestep + vecAlphaPrev.*(scalTimestep^2/2);
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -590,7 +626,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               %%  Capped by Coulomb:  |F_t| = K_t*|disp|  <=  mu*|F_n|
               %%  Tangential viscous damping (optional):
               %%    F_t^visc = -gamma_t * m_red * v_t^total
-              %%  Torque:  tau_i = r_i * F_t
+              %%  Torque:  tau_i = -r_i * F_t,  tau_j = -r_j * F_t
               %%  t_hat = (n_y, -n_x)  normal rotated -90 degrees
               %% =============================
         if boolFrictionOn && ~boolThreeD
@@ -609,18 +645,30 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecUnitTanX =  vecNormalY;   % [scalNumContacts x 1] unit tangent x  ( = n_y)
             vecUnitTanY = -vecNormalX;   % [scalNumContacts x 1] unit tangent y  ( = -n_x)
 
+            % Slip is evaluated with the HALF-STEP velocities v + a*dt/2 and
+            % omega + alpha*dt/2, i.e. the same increment the Verlet position
+            % update just applied (x(t+dt) - x(t) = (v + a*dt/2)*dt), so the
+            % spring follows the actual relative motion of the contact points.
+            % Using v(t) alone lags the spring by dt/2, which acts as NEGATIVE
+            % damping (~ K_t*dt/2 per contact): grains with 4-5+ contacts then
+            % vibrate and creep forever and the packing never reaches force
+            % balance.
+            vecVelXHalf  = vecVelX  + vecAccelXPrev * (scalTimestep/2);   % [N x 1]
+            vecVelYHalf  = vecVelY  + vecAccelYPrev * (scalTimestep/2);   % [N x 1]
+            vecOmegaHalf = vecOmega + vecAlphaPrev  * (scalTimestep/2);   % [N x 1]
+
             % Total tangential slip rate (velocity): (v_i - v_j) . t_hat
             vecVelTan = ...                   % [scalNumContacts x 1] total tangential slip rate
-                (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecUnitTanX + ...
-                (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecUnitTanY;
+                (vecVelXHalf(vecContactNN) - vecVelXHalf(vecContactMM)) .* vecUnitTanX + ...
+                (vecVelYHalf(vecContactNN) - vecVelYHalf(vecContactMM)) .* vecUnitTanY;
 
             % Rotational slip rate: -(omega_i*r_i + omega_j*r_j)
             vecRi = vecDiameter(vecContactNN) / 2;   % [scalNumContacts x 1] radius of grain i
             vecRj = vecDiameter(vecContactMM) / 2;   % [scalNumContacts x 1] radius of grain j
             vecVelTan = vecVelTan - (...     % subtract rotational contribution
-                vecOmega(vecContactNN) .* vecRi + vecOmega(vecContactMM) .* vecRj);
+                vecOmegaHalf(vecContactNN) .* vecRi + vecOmegaHalf(vecContactMM) .* vecRj);
 
-            % Advance tangential displacement:  disp(t+dt) = disp(t) + vel(t)*dt
+            % Advance tangential displacement:  disp(t+dt) = disp(t) + vel(t+dt/2)*dt
             vecDispTan = vecDispTan + vecVelTan * scalTimestep;
 
             % Coulomb cap: |F_t| = K_t*|disp| <= mu*|F_n|  ->  clamp the displacement
@@ -651,9 +699,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 accumarray(vecContactNN, vecFtY, [N 1]) - ...
                 accumarray(vecContactMM, vecFtY, [N 1]);
 
-            % Contact torques: tau_i = r_i * F_t,  tau_j = r_j * F_t
-            vecTorque = accumarray(vecContactNN,  vecRi .* vecFtMag, [N 1]) + ...
-                           accumarray(vecContactMM, vecRj .* vecFtMag, [N 1]);
+            % Contact torques: tau_i = -r_i * F_t,  tau_j = -r_j * F_t.
+            % The force on i, F_t*t_hat, acts at r_i*n_hat from its centre and
+            % (n_hat x t_hat)_z = -1; grain j gets -F_t*t_hat at -r_j*n_hat.
+            % This is the sign consistent with the slip rate above
+            % (-(omega_i*r_i + omega_j*r_j)): the tangential spring then
+            % stores/returns energy exactly, while a +r*F_t torque does work
+            % 2*F_t*(r_i*omega_i + r_j*omega_j) and spins the grains up.
+            vecTorque = -(accumarray(vecContactNN, vecRi .* vecFtMag, [N 1]) + ...
+                          accumarray(vecContactMM, vecRj .* vecFtMag, [N 1]));
 
             % Persist updated tangential displacement
             matDispTan(vecLinIdx) = vecDispTan;   % write per-contact displacement back to the [N x N] matrix
@@ -761,21 +815,6 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 vecVelZ = vecVelZ + (vecAccelZPrev + vecAccelZ) .* (scalTimestep/2);  % ← correct
         end
 
-        % Over-damped frictional relaxation: drain energy out of the
-        % translational and rotational DOF every step so the Cundall-Strack
-        % springs settle into force balance instead of oscillating. Damping
-        % rate scalFrictionVelDecay/dt >> contact spring frequency, so the
-        % system is over-damped. Gated on boolFrictionOn so the frictionless
-        % path is untouched.
-        if boolFrictionOn
-            vecVelX = vecVelX * (1 - scalFrictionVelDecay);
-            vecVelY = vecVelY * (1 - scalFrictionVelDecay);
-            if boolThreeD
-                vecVelZ = vecVelZ * (1 - scalFrictionVelDecay);
-            end
-            vecOmega = vecOmega * (1 - scalFrictionVelDecay);
-        end
-
         % Zero out rattlers (no contacts)
         boolRattler = (vecCoordNum == 0);          % [N x 1]
         vecVelX(boolRattler) = 0;
@@ -837,54 +876,19 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
         % ===== end diagnostic =====
 
-        % Frictional case: drive the box purely by relative-pressure control
-        % in the slow phase from the start. The fast-compress two-stage
-        % transition to slow requires scalEk < 1e-10, but a frictional packing
-        % carries a permanent rotational/tangential KE floor (OverDamp.cpp
-        % converges on force, Acc_max < Fthresh, not on energy), so that gate
-        % is unreachable and the slow-phase expansion branch -- the only thing
-        % that can relieve an over-compressed box -- never fires. Gating on
-        % ~boolFrictionOn leaves the frictionless path byte-for-byte identical.
+        % Frictional case: friction is on from the first step and the box is
+        % driven by the relax-then-resize controller below instead of the
+        % frictionless fast/slow phases. Gating on ~boolFrictionOn leaves the
+        % frictionless path byte-for-byte identical.
         if boolFrictionOn
               % Frictional box controller + FORCE-BALANCE convergence.
-              % The box is driven toward P_target with a relative-pressure
-              % dead-band (compress when loose, expand when dense, HOLD when
-              % in-band). Convergence is NOT "box happened to stop moving" or
-              % "P in a band" (both are transients of the compression); it is
+              % Convergence is NOT "box happened to stop moving" or "P in a
+              % band" (both are transients of the compression); it is
               % per-particle FORCE BALANCE: max_i |F_net,i| / mean |F_contact|
               % below a small tolerance, sustained for several hundred
               % consecutive in-band steps, with a percolating contact network.
               % This matches OverDamp.cpp's Acc_max < Fthresh and the DEM
               % relaxation stopping criteria in the jamming literature.
-              boolBoxMoved = false;
-              if abs(scalPressure - P_target) / P_target < scalFrictionDeadBand
-                  % in-band: hold the box fixed; let the grains relax to balance
-                  boolBoxMoved = false;
-              elseif scalPressure < P_target * (1 - scalFrictionDeadBand)
-                  rate = -scalFrictionRate;   % compress (box too loose)
-                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                  vecPosX = vecPosX *(1 + rate);
-                  vecPosY = vecPosY *(1 + rate);
-                  if boolThreeD
-                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                     vecPosZ = vecPosZ *(1 + rate);
-                  end
-                  boolCellUpdateNeeded = true;
-                  boolBoxMoved = true;
-              else
-                  rate =  scalFrictionRate;   % expand (box too dense)
-                  scalBoxWidthX = scalBoxWidthX  *(1 + rate);
-                  scalBoxHeightY= scalBoxHeightY*(1 + rate);
-                  vecPosX = vecPosX *(1 + rate);
-                  vecPosY = vecPosY *(1 + rate);
-                  if boolThreeD
-                     scalBoxDepthZ = scalBoxDepthZ*(1 + rate);
-                     vecPosZ = vecPosZ *(1 + rate);
-                  end
-                  boolCellUpdateNeeded = true;
-                  boolBoxMoved = true;
-              end
 
               % Force-balance measure: net contact force (normal + tangential)
               % on each grain. A jammed, settled packing has ~zero net force on
@@ -905,6 +909,45 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                   scalForceRatio = scalMaxFnet / max(scalMeanFc, eps);
               else
                   scalForceRatio = inf;   % no contacts: not balanced, not percolating
+              end
+
+              % Relax-then-resize box controller. While P < P_target/50 there
+              % is no load-bearing network yet, so keep compressing every step
+              % (as the frictionless fast phase does). Otherwise resize only
+              % once the grains have settled since the last resize — force
+              % balance, or kinetic energy small against the elastic energy
+              % at P_target — so each decision reads a relaxed P:
+              % expand above the band; compress below it, or while the contact
+              % network does not percolate; hold in-band. Reversing direction
+              % means P_target was overshot, so the strain step is halved
+              % (bisection on the box size) down to scalFrictionStrainMin.
+              boolRelaxed = (nt - scalFrictionLastResize >= scalFrictionRelaxSteps) && ...
+                  (scalForceRatio < scalFrictionForceTol || ...
+                   scalEk < scalFrictionRelaxKE * scalFrictionEpTarget);
+              scalFrictionDir = 0;    % -1 compress, +1 expand, 0 hold
+              if scalPressure < scalPressureFastGrow
+                  scalFrictionDir = -1;
+              elseif boolRelaxed
+                  if scalPressure > P_target * (1 + scalFrictionDeadBand)
+                      scalFrictionDir = 1;
+                  elseif scalPressure < P_target * (1 - scalFrictionDeadBand) || ...
+                          scalMeanCoordNum < scalFrictionZmin
+                      scalFrictionDir = -1;
+                  end
+              end
+              boolBoxMoved = (scalFrictionDir ~= 0);
+              if boolBoxMoved
+                  if scalFrictionDir == -scalFrictionLastDir
+                      scalFrictionStrain = max(scalFrictionStrain / 2, scalFrictionStrainMin);
+                  end
+                  scalStrainFactor = 1 + scalFrictionDir * scalFrictionStrain;
+                  scalBoxWidthX  = scalBoxWidthX  * scalStrainFactor;
+                  scalBoxHeightY = scalBoxHeightY * scalStrainFactor;
+                  vecPosX = vecPosX * scalStrainFactor;
+                  vecPosY = vecPosY * scalStrainFactor;
+                  boolCellUpdateNeeded = true;
+                  scalFrictionLastDir    = scalFrictionDir;
+                  scalFrictionLastResize = nt;
               end
 
               % Acceptance: P in-band, contact network percolates, box held, and
@@ -1029,6 +1072,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
 
     fprintf('Loop finished at step %d.\n', nt);
+    if boolFricGif
+        % final (converged) frame, held on screen longer than the others
+        [~, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
+            vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
+            fricGifTitle('Final frictional packing', nt, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 2);
+        if boolFricGif
+            fprintf('Frictional compression GIF saved to: %s\n', strGifFilename);
+        end
+    end
     N_original = numel(vecPosX);  % particle count before cleanRats (for plot titles)
 
     %% Snapshot the FULL jammed state (all N particles, rattlers included)
@@ -1719,3 +1771,105 @@ function fricState = buildFricState( ...
     fricState.boxLy = scalBoxHeightY;
     fricState.matDispTan = matDispTan;
 end
+
+function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFrameSize, ...
+        vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, cellTitle, scalDelay)
+% writeFricGifFrame -- Draw the 2D frictional packing and append it to an
+% animated GIF. Each disk gets a line across its diameter at its rotation
+% angle vecTheta, so grain rotation is visible from frame to frame; disks
+% crossing the periodic boundary are drawn with their images. The first
+% call (empty vecFrameSize) creates the file, later calls append frames
+% cropped/padded to the first frame's size. Frames are quantized to a fixed
+% 6x6x6 RGB palette (works in MATLAB and Octave). Any failure (no display,
+% figure closed, write error) warns and returns boolOk = false so the caller
+% stops recording; it never aborts the packing run.
+    boolOk = true;
+    boolFirstFrame = isempty(vecFrameSize);
+    try
+        vecRadius = vecDiameter / 2;
+        boolLarge = vecDiameter > min(vecDiameter) * (1 + 1e-9);
+
+        % Periodic images: keep every copy whose disk overlaps the box
+        vecX = []; vecY = []; vecR = []; vecT = []; vecL = false(0, 1);
+        for ox = [-1 0 1] * scalBoxWidthX
+            for oy = [-1 0 1] * scalBoxHeightY
+                boolIn = (vecPosX + ox + vecRadius > 0) & (vecPosX + ox - vecRadius < scalBoxWidthX) & ...
+                         (vecPosY + oy + vecRadius > 0) & (vecPosY + oy - vecRadius < scalBoxHeightY);
+                vecX = [vecX; vecPosX(boolIn) + ox];   %#ok<AGROW>
+                vecY = [vecY; vecPosY(boolIn) + oy];   %#ok<AGROW>
+                vecR = [vecR; vecRadius(boolIn)];      %#ok<AGROW>
+                vecT = [vecT; vecTheta(boolIn)];       %#ok<AGROW>
+                vecL = [vecL; boolLarge(boolIn)];      %#ok<AGROW>
+            end
+        end
+
+        clf(hFig);
+        hAx = axes('Parent', hFig);
+        hold(hAx, 'on');
+        vecCircle = linspace(0, 2*pi, 33)';
+        vecCircle(end) = [];
+        % disks (one patch per size class), then one NaN-separated line object
+        % for all the diameters
+        if any(~vecL)
+            patch(hAx, cos(vecCircle) * vecR(~vecL)' + vecX(~vecL)', ...
+                       sin(vecCircle) * vecR(~vecL)' + vecY(~vecL)', ...
+                  [0.6 0.8 1.0], 'EdgeColor', 'k');
+        end
+        if any(vecL)
+            patch(hAx, cos(vecCircle) * vecR(vecL)' + vecX(vecL)', ...
+                       sin(vecCircle) * vecR(vecL)' + vecY(vecL)', ...
+                  [1.0 0.8 0.6], 'EdgeColor', 'k');
+        end
+        vecDx = vecR .* cos(vecT);
+        vecDy = vecR .* sin(vecT);
+        matLineX = [vecX - vecDx, vecX + vecDx, nan(size(vecX))]';
+        matLineY = [vecY - vecDy, vecY + vecDy, nan(size(vecY))]';
+        line(hAx, matLineX(:), matLineY(:), 'Color', [0.8 0 0], 'LineWidth', 1.5);
+        axis(hAx, 'equal');
+        axis(hAx, [0 scalBoxWidthX 0 scalBoxHeightY]);
+        box(hAx, 'on');
+        ht = title(hAx, cellTitle, 'Interpreter', 'latex');
+        set(ht, 'Color', [0 0 0], 'FontWeight', 'bold', 'FontSize', 14);
+        drawnow;
+        drawnow;
+
+        imgFrame = getframe(hFig);
+        imgFrame = imgFrame.cdata;
+        if boolFirstFrame
+            vecFrameSize = [size(imgFrame, 1) size(imgFrame, 2)];
+        end
+        % the figure may be resized mid-run: crop/pad onto a white canvas
+        imgCanvas = 255 * ones([vecFrameSize 3], 'uint8');
+        scalRows = min(vecFrameSize(1), size(imgFrame, 1));
+        scalCols = min(vecFrameSize(2), size(imgFrame, 2));
+        imgCanvas(1:scalRows, 1:scalCols, :) = imgFrame(1:scalRows, 1:scalCols, :);
+
+        [imgIndexed, matColorMap] = rgb2ind(imgCanvas, 256);
+        if boolFirstFrame
+            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', ...
+                'LoopCount', Inf, 'DelayTime', scalDelay);
+            fprintf('Frictional compression GIF path: %s\n', strGifFilename);
+        else
+            imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', ...
+                'WriteMode', 'append', 'DelayTime', scalDelay);
+        end
+    catch ME
+        warning('pack:GIFExportFailed', ...
+            'Could not write frictional compression GIF frame (recording stopped): %s', ME.message);
+        boolOk = false;
+    end
+end
+
+function cellTitle = fricGifTitle(strLabel, nt, scalPressure, P_target, vecDiameter, ...
+        scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu)
+
+    scalPhi = sum(pi * vecDiameter.^2 / 4) / (scalBoxWidthX * scalBoxHeightY);
+
+    cellTitle = { ...
+        sprintf('%s ($\\mu = %.2f$), step %d', ...
+                strLabel, scalMu, nt), ...
+        sprintf('$P/P_{\\mathrm{target}} = %.3f \\quad \\phi = %.4f \\quad Z = %.2f$', ...
+                scalPressure / P_target, scalPhi, scalMeanCoordNum) ...
+    };
+end
+
