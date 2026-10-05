@@ -31,7 +31,7 @@ def main():
     seed_values     = [1,2]
     x_mult_values   = [1]
     y_mult_values   = [1]
-    z_mult_values   = [160]
+    z_mult_values   = [320]
     plotit          = False
     calc_eig        = False
     save_path       = "./data/packings/3d/hooke/"
