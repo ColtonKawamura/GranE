@@ -37,7 +37,7 @@ def main():
     M_values        = [1]
     Bv_values       = [1, 0.3, 0.1, 0.03, 0.01]
     w_D_values      = [10, 3, 1, .3, .1]
-    N_values        = [160000]
+    N_values        = [320000]
     P_values        = [0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
     W_values        = [10]
     seed_values     = [1]
