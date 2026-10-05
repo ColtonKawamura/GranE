@@ -112,11 +112,13 @@ basePF = computePackingFraction(base.vecDiameter, base.scalBoxWidthX, base.scalB
 baseZn = computeMeanCoordNum(base.vecPosX, base.vecPosY, base.vecDiameter, base.scalBoxWidthX, base.scalBoxHeightY, base.vecPosZ, base.scalBoxDepthZ);
 
 % Load the TILED (432-particle superlattice) and recompute PF + Zn from its
-% stored positions (independent of the stored summary numbers).
-strTiled = "data/3D_N432_P0.001_Width6_Seed1_TiledX1Y1Z2.mat";
+% stored positions (independent of the stored summary numbers). The tiled
+% file uses the normal packing name (N = tiled count), so simMD finds it.
+strTiled = "data/3D_N432_P0.001_Width6_Seed1.mat";
 assert(isfile(strTiled), sprintf('tiled 432-particle file missing: %s', strTiled));
 til = load(strTiled);
 assert(til.N == 432, sprintf('tiled N = %d, expected 432', til.N));
+assert(til.x_mult == 1 && til.y_mult == 1 && til.z_mult == 2, 'tiled file should record the multipliers (1, 1, 2)');
 tilPF = computePackingFraction(til.vecDiameter, til.scalBoxWidthX, til.scalBoxHeightY, til.scalBoxDepthZ);
 tilZn = computeMeanCoordNum(til.vecPosX, til.vecPosY, til.vecDiameter, til.scalBoxWidthX, til.scalBoxHeightY, til.vecPosZ, til.scalBoxDepthZ);
 

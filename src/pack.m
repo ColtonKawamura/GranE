@@ -1,25 +1,26 @@
-function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, calc_eig, save_path, options)
+function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiameterRatio, scalMass, ...
+        scalPressureTarget, scalSeed, boolPlotIt, scalXMult, scalYMult, scalZMult, boolCalcEig, strSavePath, sOptions)
 
 
     arguments
-        N        (1,1) double {mustBeInteger, mustBePositive} = 100
-        K        (1,1) double {mustBePositive} = 100
-        D        (1,1) double {mustBePositive} = 1
-        G        (1,1) double {mustBePositive} = 1.4
-        M        (1,1) double {mustBePositive} = 1
-        P_target (1,1) double {mustBePositive} = 0.0001
-        seed     (1,1) double {mustBeInteger, mustBePositive} = 1
-        plotit   (1,1) logical = false
-        x_mult   (1,1) double = 1
-        y_mult   (1,1) double = 1
-        z_mult   (1,1) double = 0
-        calc_eig (1,1) logical = false
-        save_path (1,1) string = "./junkyard"
-        % options is passed as a plain positional struct (the frictional test
-        % calls pack(...,save_path,opts)). A fully-defaulted struct means the
+        scalNumParticles   (1,1) double {mustBeInteger, mustBePositive} = 100     % N, number of particles
+        scalSpringConstant (1,1) double {mustBePositive} = 100                    % K, contact spring constant
+        scalDiameterSmall  (1,1) double {mustBePositive} = 1                      % D, small-particle diameter
+        scalDiameterRatio  (1,1) double {mustBePositive} = 1.4                    % G, large/small diameter ratio
+        scalMass           (1,1) double {mustBePositive} = 1                      % M, particle mass
+        scalPressureTarget (1,1) double {mustBePositive} = 0.0001                 % P_target, target pressure
+        scalSeed           (1,1) double {mustBeInteger, mustBePositive} = 1       % random seed
+        boolPlotIt         (1,1) logical = false                                  % draw the packing as it compresses
+        scalXMult          (1,1) double = 1                                       % repeat-tile multiplier in x
+        scalYMult          (1,1) double = 1                                       % repeat-tile multiplier in y
+        scalZMult          (1,1) double = 0                                       % repeat-tile multiplier in z; ~= 0 selects 3D
+        boolCalcEig        (1,1) logical = false                                  % also save Hessian eigenmodes (2D only)
+        strSavePath        (1,1) string = "./junkyard"                            % prefix of every saved file, e.g. "data/"
+        % sOptions is passed as a plain positional struct (the frictional test
+        % calls pack(...,strSavePath,opts)). A fully-defaulted struct means the
         % frictionless 13-arg calls get all fields, and a caller may pass a
         % partial struct; missing fields are backfilled below.
-        options (1,1) struct = struct('hertzian', false, ...
+        sOptions (1,1) struct = struct('hertzian', false, ...
             'flagFrictionOn', false, ...
             'scalFricCoef', 0.50, ...
             'scalTangentialK', 1/3, ...
@@ -31,76 +32,78 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
      % Backfill any option fields a caller omitted so both the frictionless
      % (13-arg) and frictional (14-arg with partial opts) call styles work.
-    if ~isfield(options, 'hertzian')
-        options.hertzian = false;
+    if ~isfield(sOptions, 'hertzian')
+        sOptions.hertzian = false;
     end
-    if ~isfield(options, 'flagFrictionOn')
-        options.flagFrictionOn = false;
+    if ~isfield(sOptions, 'flagFrictionOn')
+        sOptions.flagFrictionOn = false;
     end
-    if ~isfield(options, 'scalFricCoef')
-        options.scalFricCoef = 0.50;
+    if ~isfield(sOptions, 'scalFricCoef')
+        sOptions.scalFricCoef = 0.50;
     end
-    if ~isfield(options, 'scalTangentialK')
-        options.scalTangentialK = 1/3;
+    if ~isfield(sOptions, 'scalTangentialK')
+        sOptions.scalTangentialK = 1/3;
     end
-    if ~isfield(options, 'scalGammaNormal')
-        options.scalGammaNormal = 0;
+    if ~isfield(sOptions, 'scalGammaNormal')
+        sOptions.scalGammaNormal = 0;
     end
-    if ~isfield(options, 'scalGammaTangential')
-        options.scalGammaTangential = 0;
+    if ~isfield(sOptions, 'scalGammaTangential')
+        sOptions.scalGammaTangential = 0;
     end
-    if ~isfield(options, 'saveFrictionalState')
-        options.saveFrictionalState = false;
+    if ~isfield(sOptions, 'saveFrictionalState')
+        sOptions.saveFrictionalState = false;
     end
-    if ~isfield(options, 'saveFullState')
-        options.saveFullState = true;
+    if ~isfield(sOptions, 'saveFullState')
+        sOptions.saveFullState = true;
     end
+    boolHertzian      = sOptions.hertzian;       % Hertzian (vs. linear) contact law
+    boolSaveFullState = sOptions.saveFullState;  % also save the pre-cleanRats tile source
 
     % check to see if 3d path is needed
-    boolThreeD = (z_mult ~= 0);
+    boolThreeD = (scalZMult ~= 0);
 
     %% Guard: Cundall-Strack friction is implemented for 2D packings only.
     %% 3D friction (rotation about 3 axes) requires a different model.
-    if boolThreeD && options.flagFrictionOn
+    if boolThreeD && sOptions.flagFrictionOn
         error('pack:Friction3DNotSupported', 'flagFrictionOn = true is 2D only.');
     end
 
 
     % Check if packing already exists — skip if so
     if boolThreeD
-        scalRoundedWidth = round(N^(1/3));
-        if options.hertzian
+        scalRoundedWidth = round(scalNumParticles^(1/3));
+        if boolHertzian
             strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
             strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         end
         % Full-state (pre-cleanRats) filename for the repeat-tile source file.
         % A '_Full' tag keeps it distinct from the backbone .mat so re-running
         % pack on the same parameters does not clobber the tile source.
-        if options.hertzian
+        if boolHertzian
             strFullFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
             strFullFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         end
     else
-        scalRoundedWidth = round(sqrt(N));
-        if options.hertzian
+        scalRoundedWidth = round(sqrt(scalNumParticles));
+        if boolHertzian
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         end
-        if options.hertzian
+        if boolHertzian
             strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
             strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
-                save_path, N, num2str(P_target), scalRoundedWidth, seed);
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         end
     end
     if isfile(strFilename)
@@ -110,16 +113,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
     tic
 
-    rng(seed)
+    rng(scalSeed)
 
 %% Box and particle setup
     if boolThreeD
-        scalBoxWidthX  = 2*N^(1/3)*D;   % Lx
-        scalBoxHeightY = 2*N^(1/3)*D;   % Ly
-        scalBoxDepthZ  = 2*N^(1/3)*D;   % Lz
+        scalBoxWidthX  = 2*scalNumParticles^(1/3)*scalDiameterSmall;   % Lx
+        scalBoxHeightY = 2*scalNumParticles^(1/3)*scalDiameterSmall;   % Ly
+        scalBoxDepthZ  = 2*scalNumParticles^(1/3)*scalDiameterSmall;   % Lz
     else
-        scalBoxWidthX  = 2*sqrt(N)*D;   % Lx
-        scalBoxHeightY = 2*sqrt(N)*D;   % Ly
+        scalBoxWidthX  = 2*sqrt(scalNumParticles)*scalDiameterSmall;   % Lx
+        scalBoxHeightY = 2*sqrt(scalNumParticles)*scalDiameterSmall;   % Ly
     end
 
     scalDissipationVelocity = 0.1;  % Bv: velocity-dependent dissipation prefactor
@@ -127,14 +130,14 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalTemperature = 1;    % T:  initial velocity scale
 
     %% Equal number of small and large particles
-    scalNumSmall = N/2;
+    scalNumSmall = scalNumParticles/2;
 
     % Assign diameters: smallest half get D, largest half get D*G
-    [~, vecSortIdx] = sort(rand(N, 1)); % [N x 1] randomize the particle indices
-    vecDiameter = D * G * ones(N, 1); % [N x 1] default all to large
-    vecDiameter(vecSortIdx(1:scalNumSmall)) = D; % overwrite bottom half with small
+    [~, vecSortIdx] = sort(rand(scalNumParticles, 1)); % [N x 1] randomize the particle indices
+    vecDiameter = scalDiameterSmall * scalDiameterRatio * ones(scalNumParticles, 1); % [N x 1] default all to large
+    vecDiameter(vecSortIdx(1:scalNumSmall)) = scalDiameterSmall; % overwrite bottom half with small
 
-    if options.hertzian
+    if boolHertzian
         vecRadii = vecDiameter / 2; % [N x 1]
     end
 
@@ -145,8 +148,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     %% Physical parameters
     scalGravity = 0;
     scalPressure = 0;
-    scalPressureFastGrow = P_target / 50;
-    scalCompressionRate = P_target;
+    scalPressureFastGrow = scalPressureTarget / 50;
+    scalCompressionRate = scalPressureTarget;
     %% Frictional (Cundall-Strack) compression protocol — 2D only.
     %%
     %%  Friction is ON for the whole compression (no frictionless
@@ -173,7 +176,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase (safety only)
     scalFrictionStrain        = 0.01;       % current box strain per resize (starts at the
                                              % frictionless fast rate, halved on each reversal)
-    scalFrictionStrainMin     = 1e-2 * P_target;  % floor for the bisected strain step
+    scalFrictionStrainMin     = 1e-2 * scalPressureTarget;  % floor for the bisected strain step
     scalFrictionRelaxSteps    = 100;        % minimum steps between resizes (one contact
                                              % oscillation period: dt = period/100)
     scalFrictionRelaxKE       = 1e-2;       % relaxed once kinetic energy per grain (incl.
@@ -182,10 +185,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     scalFrictionLastDir       = 0;          % last resize: -1 compress, +1 expand, 0 none yet
     scalFrictionLastResize    = 0;          % step of the last resize
     % elastic energy per grain at which the pressure estimate below reads P_target
-    if options.hertzian
-        scalFrictionEpTarget = (2/5) * K * P_target^(5/2);
+    if boolHertzian
+        scalFrictionEpTarget = (2/5) * scalSpringConstant * scalPressureTarget^(5/2);
     else
-        scalFrictionEpTarget = 0.5 * K * P_target^2;
+        scalFrictionEpTarget = 0.5 * scalSpringConstant * scalPressureTarget^2;
     end
     scalSlowConvSteps           = 20000;        % for the FRICTIONLESS slow phase:
                                               % consecutive steps the box must be
@@ -220,13 +223,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             %%   scalGammaNormal    = normal dashpot prefactor; 0 keeps original.
             %%   scalGammaTangential = tangential dashpot prefactor (optional).
             %%   boolSaveFricState   = export fricState sidecar .mat before cleanRats.
-    boolFrictionOn          = options.flagFrictionOn;
-    scalMu                  = options.scalFricCoef;
-    scalKtOverK             = options.scalTangentialK;
-    scalKt                  = K * scalKtOverK;
-    scalGammaNormal          = options.scalGammaNormal;
-    scalGammaTangential     = options.scalGammaTangential;
-    boolSaveFricState       = options.saveFrictionalState;
+    boolFrictionOn          = sOptions.flagFrictionOn;
+    scalMu                  = sOptions.scalFricCoef;
+    scalKtOverK             = sOptions.scalTangentialK;
+    scalKt                  = scalSpringConstant * scalKtOverK;
+    scalGammaNormal          = sOptions.scalGammaNormal;
+    scalGammaTangential     = sOptions.scalGammaTangential;
+    boolSaveFricState       = sOptions.saveFrictionalState;
 
 
 
@@ -240,10 +243,10 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % so use a conservative estimate based on largest R and largest delta
     % largest Reff ~ G*D/4 (large-large contact)
     % and largest delta ~ 1e-1 (max target pressure)
-    if options.hertzian
-        scalTimestep = 2*pi * sqrt(M / (2*K*sqrt(G*D/4 .* 1E-1))) * 0.01;
+    if boolHertzian
+        scalTimestep = 2*pi * sqrt(scalMass / (2*scalSpringConstant*sqrt(scalDiameterRatio*scalDiameterSmall/4 .* 1E-1))) * 0.01;
     else
-        scalTimestep = 2*pi * sqrt(M/K) * 0.01;
+        scalTimestep = 2*pi * sqrt(scalMass/scalSpringConstant) * 0.01;
     end
     scalMaxSteps = 5e6; % sane hard cap: every phase now converges on a frozen
                         % box (scalSlowConvSteps / frictional controller) well
@@ -261,38 +264,38 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % meshgrid() is more inuitive (row is y-position,etc),
     % bu ndgrid() is faster
     if boolThreeD
-    [vecPosX, vecPosY, vecPosZ] = ndgrid(D/2 : G*D : scalBoxWidthX-D/2, ...
-                                          D/2 : G*D : scalBoxHeightY-D/2, ...
-                                          D/2 : G*D : scalBoxDepthZ-D/2);
+    [vecPosX, vecPosY, vecPosZ] = ndgrid(scalDiameterSmall/2 : scalDiameterRatio*scalDiameterSmall : scalBoxWidthX-scalDiameterSmall/2, ...
+                                          scalDiameterSmall/2 : scalDiameterRatio*scalDiameterSmall : scalBoxHeightY-scalDiameterSmall/2, ...
+                                          scalDiameterSmall/2 : scalDiameterRatio*scalDiameterSmall : scalBoxDepthZ-scalDiameterSmall/2);
     else
-        [vecPosX, vecPosY] = ndgrid(D/2 : G*D : scalBoxWidthX-D/2, ...
-                                    D/2 : G*D : scalBoxHeightY-D/2);
+        [vecPosX, vecPosY] = ndgrid(scalDiameterSmall/2 : scalDiameterRatio*scalDiameterSmall : scalBoxWidthX-scalDiameterSmall/2, ...
+                                    scalDiameterSmall/2 : scalDiameterRatio*scalDiameterSmall : scalBoxHeightY-scalDiameterSmall/2);
     end
 
     % shuffle the particles to avoid crystallization
     % shuffle the indices of the particles
     [~, vecShuffleIdx] = sort(rand(numel(vecPosX), 1));  % [numel x 1]
-    vecPosX = vecPosX(vecShuffleIdx(1:N));   % [N x 1] of particle x-positions
-    vecPosY = vecPosY(vecShuffleIdx(1:N));   % [N x 1] etc
+    vecPosX = vecPosX(vecShuffleIdx(1:scalNumParticles));   % [N x 1] of particle x-positions
+    vecPosY = vecPosY(vecShuffleIdx(1:scalNumParticles));   % [N x 1] etc
     if boolThreeD
-        vecPosZ = vecPosZ(vecShuffleIdx(1:N));
+        vecPosZ = vecPosZ(vecShuffleIdx(1:scalNumParticles));
     end
 
     % assign random initial velocities
-    vecVelX = sqrt(scalTemperature) * randn(N, 1);  % [N x 1]
+    vecVelX = sqrt(scalTemperature) * randn(scalNumParticles, 1);  % [N x 1]
     vecVelX = vecVelX - mean(vecVelX);
-    vecVelY = sqrt(scalTemperature) * randn(N, 1);  % [N x 1]
+    vecVelY = sqrt(scalTemperature) * randn(scalNumParticles, 1);  % [N x 1]
     vecVelY = vecVelY - mean(vecVelY);
     if boolThreeD
-        vecVelZ = sqrt(scalTemperature) * randn(N, 1);
+        vecVelZ = sqrt(scalTemperature) * randn(scalNumParticles, 1);
         vecVelZ = vecVelZ - mean(vecVelZ);  % [N x 1]
     end
 
     % start with zero accelerations
-    vecAccelXPrev = zeros(N, 1);  % [N x 1]
-    vecAccelYPrev = zeros(N, 1);  % [N x 1]
+    vecAccelXPrev = zeros(scalNumParticles, 1);  % [N x 1]
+    vecAccelYPrev = zeros(scalNumParticles, 1);  % [N x 1]
     if boolThreeD
-        vecAccelZPrev = zeros(N, 1);  % [N x 1]
+        vecAccelZPrev = zeros(scalNumParticles, 1);  % [N x 1]
     end
 
     %% Rotational DOFs for 2D disks (out-of-plane z rotation)
@@ -300,8 +303,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     %%   vecAlphaPrev    = previous angular acceleration, Verlet half-step.
     %%   Solid disk: I_i = (M_i * r_i^2) / 2,  alpha = torque / I
     if boolFrictionOn
-        vecOmega       = zeros(N, 1);
-        vecAlphaPrev   = zeros(N, 1);
+        vecOmega       = zeros(scalNumParticles, 1);
+        vecAlphaPrev   = zeros(scalNumParticles, 1);
     end
 
 
@@ -317,15 +320,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             %%   N x N matrices store the displacement for all N*(N-1)/2 pairs,
             %%   matching Energy_Disk_VL.cpp.
     if boolFrictionOn
-        matDispTan       = zeros(N, N);
-        matDispTanStuck  = false(N, N);
+        matDispTan       = zeros(scalNumParticles, scalNumParticles);
+        matDispTanStuck  = false(scalNumParticles, scalNumParticles);
     end
 
 %% Verlet cell list setup
     % Determine cell size rounded to be at least 1*G*D
     % to avoid missing interactions, I tried this out 
     % many times and 3 works best
-    scalRawCellWidth = 3 * G * D; % Changing this will mess up findNeighbors2D. Update findNeighbors2D to be like 3D version (so it doesn't double count neighbors) before changing this.
+    scalRawCellWidth = 3 * scalDiameterRatio * scalDiameterSmall; % Changing this will mess up findNeighbors2D. Update findNeighbors2D to be like 3D version (so it doesn't double count neighbors) before changing this.
 
     % Divide the box into integer number of cells
     % so that the cell width is a multiple of scalRawCellWidth
@@ -392,45 +395,45 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % cell 2 -> [4]
     % cell 3 -> [1, 3]
     % accumarray groups particle indices by cell — O(N) instead of O(N * numCells)
-    % cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY 1], @(x){x});
+    % cellParticleList = accumarray(vecCellLinearIdx, (1:scalNumParticles)', [scalNumCellsX*scalNumCellsY 1], @(vecCellMembers){vecCellMembers});
 
     % reshape just converts that flat list back into a 2D grid so you can look up neighbors naturally by (ix, iy) index.
     % cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY);  % [scalNumCellsX x scalNumCellsY]
 
     %% Setup plotting
-    % plotit shows only the packing, redrawn every scalPlotSkip steps: in
+    % boolPlotIt shows only the packing, redrawn every scalPlotSkip steps: in
     % figure 1, or for 2D frictional runs in the compression-GIF figure below
     % (disks with a diameter line that shows rotation).
-    boolFricGif     = plotit && boolFrictionOn && ~boolThreeD;
-    boolPlotPacking = plotit && ~boolFricGif;
+    boolFricGif     = boolPlotIt && boolFrictionOn && ~boolThreeD;
+    boolPlotPacking = boolPlotIt && ~boolFricGif;
     if boolPlotPacking
         figure(1), clf;
-        hPlotHandles = gobjects(N, 1);  % [N x 1]
-        for np = 1:N
-            hPlotHandles(np) = rectangle( ...
-                'Position',  [vecPosX(np) - 0.5*vecDiameter(np), ...
-                               vecPosY(np) - 0.5*vecDiameter(np), ...
-                               vecDiameter(np), vecDiameter(np)], ...
+        hPlotHandles = gobjects(scalNumParticles, 1);  % [N x 1]
+        for idxParticle = 1:scalNumParticles
+            hPlotHandles(idxParticle) = rectangle( ...
+                'Position',  [vecPosX(idxParticle) - 0.5*vecDiameter(idxParticle), ...
+                               vecPosY(idxParticle) - 0.5*vecDiameter(idxParticle), ...
+                               vecDiameter(idxParticle), vecDiameter(idxParticle)], ...
                 'Curvature', [1 1], 'EdgeColor', 'b');
         end
         axis equal; axis([0 scalBoxWidthX 0 scalBoxHeightY]);
         hAxPacking = gca;
     end
 
-    %% Frictional compression movie (2D, friction on, plotit = true)
+    %% Frictional compression movie (2D, friction on, boolPlotIt = true)
     %  Every scalPlotSkip steps the packing is drawn with a line across each
     %  disk's diameter at its accumulated rotation angle vecTheta, and the
     %  frame is appended to an animated GIF next to the .mat, so grain
     %  rotation and the approach to the converged packing can be checked by
     %  eye. vecTheta is only integrated while this movie is being recorded.
     if boolFricGif
-        vecTheta = zeros(N, 1);          % [N x 1] rotation angle (rad, counter-clockwise +)
+        vecTheta = zeros(scalNumParticles, 1);          % [N x 1] rotation angle (rad, counter-clockwise +)
         strGifFilename = [strFilename(1:end-4) '_Fric_Compression.gif'];
         hFigGif = figure('Color', 'w', 'Name', 'Frictional compression', 'Position', [100 100 600 640]);
         vecGifFrameSize = [];            % [rows cols] of the first frame; later frames match it
         [vecGifFrameSize, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
             vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
-            fricGifTitle('Frictional compression', 0, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, 0, scalMu), 0.1);
+            fricGifTitle('Frictional compression', 0, scalPressure, scalPressureTarget, vecDiameter, scalBoxWidthX, scalBoxHeightY, 0, scalMu), 0.1);
     end
 
     %% Main time-integration loop
@@ -442,43 +445,43 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     % we're goingt to store pairs like this:
     % vecPairIdxSource = [1, 1, 2, 3, ...]   <- first particle of each pair
     % vecPairIdxDest = [2, 3, 3, 4, ...]   <- second particle of each pair
-    vecPairIdxSource = zeros(N*12, 1);  % [N*12 x 1]
-    vecPairIdxDest = zeros(N*12, 1);  % [N*12 x 1]
-    scalMaxPairs = N*12;
+    vecPairIdxSource = zeros(scalNumParticles*12, 1);  % [N*12 x 1]
+    vecPairIdxDest = zeros(scalNumParticles*12, 1);  % [N*12 x 1]
+    scalMaxPairs = scalNumParticles*12;
 
     fprintf('Starting main integration loop (max %d steps)...\n', scalMaxSteps);
     scalLogInterval = round(0.05 * scalMaxSteps);  % 5% of max steps
-    for nt = 1:scalMaxSteps
+    for idxStep = 1:scalMaxSteps
 
         % Progress logging
-        if mod(nt, 5000) == 0
+        if mod(idxStep, 5000) == 0
             fprintf('  step %d | P=%.4e | P_target=%.4e | P/P_target=%.4f\n', ...
-                nt, scalPressure, P_target, scalPressure/P_target);
+                idxStep, scalPressure, scalPressureTarget, scalPressure/scalPressureTarget);
         end
 
         %% Plotting: redraw the packing
-        if boolPlotPacking && mod(nt, scalPlotSkip) == 0
+        if boolPlotPacking && mod(idxStep, scalPlotSkip) == 0
             % if the figure was closed, stop redrawing but keep packing
             boolPlotPacking = all(ishandle(hPlotHandles));
             if boolPlotPacking
-                for np = 1:N
-                    set(hPlotHandles(np), 'Position', ...
-                        [vecPosX(np) - 0.5*vecDiameter(np), ...
-                         vecPosY(np) - 0.5*vecDiameter(np), ...
-                         vecDiameter(np), vecDiameter(np)]);
+                for idxParticle = 1:scalNumParticles
+                    set(hPlotHandles(idxParticle), 'Position', ...
+                        [vecPosX(idxParticle) - 0.5*vecDiameter(idxParticle), ...
+                         vecPosY(idxParticle) - 0.5*vecDiameter(idxParticle), ...
+                         vecDiameter(idxParticle), vecDiameter(idxParticle)]);
                 end
                 axis(hAxPacking, [0 scalBoxWidthX 0 scalBoxHeightY]);
                 title(hAxPacking, sprintf('step %d, P/P_{target} = %.3f, L_y = %.4f', ...
-                    nt, scalPressure / P_target, scalBoxHeightY));
+                    idxStep, scalPressure / scalPressureTarget, scalBoxHeightY));
                 drawnow;
             end
-        elseif boolPlotKE && mod(nt, scalPlotSkip) == 0
+        elseif boolPlotKE && mod(idxStep, scalPlotSkip) == 0
             figure(1), plot(vecPosX, vecPosY, 'k.'); drawnow;
         end
-        if boolFricGif && mod(nt, scalPlotSkip) == 0
+        if boolFricGif && mod(idxStep, scalPlotSkip) == 0
             [vecGifFrameSize, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
                 vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
-                fricGifTitle('Frictional compression', nt, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 0.1);
+                fricGifTitle('Frictional compression', idxStep, scalPressure, scalPressureTarget, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 0.1);
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -497,13 +500,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%% Re-assign particles to cells %%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        if boolCellUpdateNeeded || mod(nt, scalCellUpdateInterval) == 0
+        if boolCellUpdateNeeded || mod(idxStep, scalCellUpdateInterval) == 0
             if boolThreeD
                 [vecPosX, vecPosY, vecPosZ, cellParticleList, scalNumCellsX, scalNumCellsY, scalNumCellsZ] = ...
-                    rebuildCellList3D(vecPosX, vecPosY, vecPosZ, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ, scalRawCellWidth, scalTimestep, N);
+                    rebuildCellList3D(vecPosX, vecPosY, vecPosZ, scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ, scalRawCellWidth, scalTimestep, scalNumParticles);
             else
                 [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...
-                    rebuildCellList(vecPosX, vecPosY, scalBoxWidthX, scalBoxHeightY, scalRawCellWidth, scalTimestep, N);
+                    rebuildCellList(vecPosX, vecPosY, scalBoxWidthX, scalBoxHeightY, scalRawCellWidth, scalTimestep, scalNumParticles);
             end
             boolCellUpdateNeeded = false;
         end
@@ -542,7 +545,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             vecSepZ = vecSepZ - scalBoxDepthZ * round(vecSepZ / scalBoxDepthZ);
         end
 
-        vecContactDist = matContactDist(vecActivePairSource + N*(vecActivePairDest-1));
+        vecContactDist = matContactDist(vecActivePairSource + scalNumParticles*(vecActivePairDest-1));
 
         if boolThreeD
             vecSepDistSq = vecSepX.^2 + vecSepY.^2 + vecSepZ.^2;
@@ -564,7 +567,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecContactNN = vecActivePairSource(boolContact);% [scalNumContacts x 1]
         vecContactMM = vecActivePairDest(boolContact);% [scalNumContacts x 1]
 
-        if options.hertzian
+        if boolHertzian
             vecRadiiNN = vecRadii(vecContactNN); % [scalNumContacts x 1]
             vecRadiiMM = vecRadii(vecContactMM); % [scalNumContacts x 1]
             % this falls out of the math for two parabaloids https://en.wikipedia.org/wiki/Contact_mechanics
@@ -575,12 +578,12 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecOverlap = vecContactDist - vecSepDist; % [scalNumContacts x 1] positive when overlapping
 
         % Force magnitude and potential energy per contact
-        if options.hertzian
-            vecForceMag = -(4/3) .* K .* sqrt(vecRadiiEff) .* vecOverlap.^(3/2);
-            vecPotentialContact = (4/3) .* (2/5) * K .* sqrt(vecRadiiEff) .* vecOverlap.^(5/2);
+        if boolHertzian
+            vecForceMag = -(4/3) .* scalSpringConstant .* sqrt(vecRadiiEff) .* vecOverlap.^(3/2);
+            vecPotentialContact = (4/3) .* (2/5) * scalSpringConstant .* sqrt(vecRadiiEff) .* vecOverlap.^(5/2);
         else
-            vecForceMag = -K .* vecOverlap; % [scalNumContacts x 1]
-            vecPotentialContact = 0.5 * K .* vecOverlap.^2; % [scalNumContacts x 1]
+            vecForceMag = -scalSpringConstant .* vecOverlap; % [scalNumContacts x 1]
+            vecPotentialContact = 0.5 * scalSpringConstant .* vecOverlap.^2; % [scalNumContacts x 1]
         end
 
         % Unit vectors along contact normal
@@ -591,7 +594,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
 
         % Velocity-dependent dissipation projected onto contact normal
-        scalReducedMass = M / 2; % may need to change this for non-uniform mass if the future
+        scalReducedMass = scalMass / 2; % may need to change this for non-uniform mass if the future
         vecRelVelDotNormal = (vecVelX(vecContactNN) - vecVelX(vecContactMM)) .* vecNormalX ...
                            + (vecVelY(vecContactNN) - vecVelY(vecContactMM)) .* vecNormalY;
         if boolThreeD
@@ -608,13 +611,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
 
         % Distribute force via Newton's 3rd law
-        vecForceX = accumarray(vecContactNN, vecForceContactX, [N 1]) ...
-                  - accumarray(vecContactMM, vecForceContactX, [N 1]);
-        vecForceY = accumarray(vecContactNN, vecForceContactY, [N 1]) ...
-                  - accumarray(vecContactMM, vecForceContactY, [N 1]);
+        vecForceX = accumarray(vecContactNN, vecForceContactX, [scalNumParticles 1]) ...
+                  - accumarray(vecContactMM, vecForceContactX, [scalNumParticles 1]);
+        vecForceY = accumarray(vecContactNN, vecForceContactY, [scalNumParticles 1]) ...
+                  - accumarray(vecContactMM, vecForceContactY, [scalNumParticles 1]);
         if boolThreeD
-            vecForceZ = accumarray(vecContactNN, vecForceContactZ, [N 1]) ...
-                      - accumarray(vecContactMM, vecForceContactZ, [N 1]);
+            vecForceZ = accumarray(vecContactNN, vecForceContactZ, [scalNumParticles 1]) ...
+                      - accumarray(vecContactMM, vecForceContactZ, [scalNumParticles 1]);
         end
 
         
@@ -630,13 +633,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               %%  t_hat = (n_y, -n_x)  normal rotated -90 degrees
               %% =============================
         if boolFrictionOn && ~boolThreeD
-            vecTorque  = zeros(N, 1);
+            vecTorque  = zeros(scalNumParticles, 1);
         end
 
         if boolFrictionOn && ~boolThreeD && scalNumContacts > 0
 
             % Per-contact state lookup from the [N x N] tangential-displacement matrix
-            vecLinIdx = vecContactNN + N * (vecContactMM - 1);   % [scalNumContacts x 1] linear index into matDispTan
+            vecLinIdx = vecContactNN + scalNumParticles * (vecContactMM - 1);   % [scalNumContacts x 1] linear index into matDispTan
             vecDispTan = matDispTan(vecLinIdx);                 % [scalNumContacts x 1] per-contact tangential displacement
             vecStuck   = matDispTanStuck(vecLinIdx);            % [scalNumContacts x 1] per-contact "has-contacted" flag
             vecDispTan(~vecStuck) = 0;
@@ -686,18 +689,18 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
             % Optional tangential viscous damping (dashpot on the slip rate)
             if scalGammaTangential > 0
-                vecFtMag = vecFtMag - (scalGammaTangential * (M / 2)) .* vecVelTan;
+                vecFtMag = vecFtMag - (scalGammaTangential * (scalMass / 2)) .* vecVelTan;
             end
 
             % Distribute tangential force via Newton's 3rd law
             vecFtX = vecFtMag .* vecUnitTanX;   % [scalNumContacts x 1] tangential force x-component
             vecFtY = vecFtMag .* vecUnitTanY;   % [scalNumContacts x 1] tangential force y-component
             vecForceX = vecForceX + ...
-                accumarray(vecContactNN, vecFtX, [N 1]) - ...
-                accumarray(vecContactMM, vecFtX, [N 1]);
+                accumarray(vecContactNN, vecFtX, [scalNumParticles 1]) - ...
+                accumarray(vecContactMM, vecFtX, [scalNumParticles 1]);
             vecForceY = vecForceY + ...
-                accumarray(vecContactNN, vecFtY, [N 1]) - ...
-                accumarray(vecContactMM, vecFtY, [N 1]);
+                accumarray(vecContactNN, vecFtY, [scalNumParticles 1]) - ...
+                accumarray(vecContactMM, vecFtY, [scalNumParticles 1]);
 
             % Contact torques: tau_i = -r_i * F_t,  tau_j = -r_j * F_t.
             % The force on i, F_t*t_hat, acts at r_i*n_hat from its centre and
@@ -706,8 +709,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             % (-(omega_i*r_i + omega_j*r_j)): the tangential spring then
             % stores/returns energy exactly, while a +r*F_t torque does work
             % 2*F_t*(r_i*omega_i + r_j*omega_j) and spins the grains up.
-            vecTorque = -(accumarray(vecContactNN, vecRi .* vecFtMag, [N 1]) + ...
-                          accumarray(vecContactMM, vecRj .* vecFtMag, [N 1]));
+            vecTorque = -(accumarray(vecContactNN, vecRi .* vecFtMag, [scalNumParticles 1]) + ...
+                          accumarray(vecContactMM, vecRj .* vecFtMag, [scalNumParticles 1]));
 
             % Persist updated tangential displacement
             matDispTan(vecLinIdx) = vecDispTan;   % write per-contact displacement back to the [N x N] matrix
@@ -720,7 +723,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         % pairs can become contacts on the next step, so resetting just those
         % (O(pairs)) is sufficient.
         if boolFrictionOn && ~boolThreeD
-            vecSeparating = vecActivePairSource(~boolContact) + N * (vecActivePairDest(~boolContact) - 1);
+            vecSeparating = vecActivePairSource(~boolContact) + scalNumParticles * (vecActivePairDest(~boolContact) - 1);
             if ~isempty(vecSeparating)
                 matDispTan(vecSeparating) = 0;
                 matDispTanStuck(vecSeparating) = false;
@@ -729,7 +732,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
             % ============ Rotational velocity-Verlet half-step ============
             if boolFrictionOn && ~boolThreeD
-            vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;
+            vecInertiaC = 0.5 * scalMass .* (vecDiameter / 2) .^ 2;
              % Rotational damping: ref OverDamp.cpp L104-106:
                %   W_n+1 = (T_n - Bt*W_n)/Bt_denorm,  Bt_denorm = 1 + Bt*dt/2
                % This is the over-damped form that makes the rotational DOF
@@ -738,18 +741,18 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             if scalGammaTangential > 0
                 scalBt = scalGammaTangential;    % user override
             end
-            Bt_den = 1 + scalBt * scalTimestep / 2;
-            vecTorque = (vecTorque - scalBt .* vecOmega) / Bt_den;
+            scalBtDenominator = 1 + scalBt * scalTimestep / 2;
+            vecTorque = (vecTorque - scalBt .* vecOmega) / scalBtDenominator;
             vecAlpha       = vecTorque ./ vecInertiaC;
             vecOmega       = vecOmega + (vecAlphaPrev + vecAlpha) .* (scalTimestep / 2);
             vecAlphaPrev   = vecAlpha;
             end
 
 % Contact count per particle (coordination number)
-        vecCoordNum = accumarray(vecContactNN, 1, [N 1]) ...
-                    + accumarray(vecContactMM, 1, [N 1]);
+        vecCoordNum = accumarray(vecContactNN, 1, [scalNumParticles 1]) ...
+                    + accumarray(vecContactMM, 1, [scalNumParticles 1]);
 
-        vecPotentialEnergyHistory(nt) = sum(vecPotentialContact) / N;
+        vecPotentialEnergyHistory(idxStep) = sum(vecPotentialContact) / scalNumParticles;
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Drag, boundaries, energy %%%%%%%%%%%%%%
@@ -759,13 +762,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
           %   W_n+1 = (W_n - Bt*W_n) / (1 + Bt*dt/2)
           % For frictional contacts the renormalized form prevents the
           % contact-damped oscillation that causes P/P_target to cycle.
-          % The frictionless additive form is identical (Bn_den -> 1).
+          % The frictionless additive form is identical (scalBnDenominator -> 1).
         if boolFrictionOn
-            Bn_den = 1 + scalDissipationAbsolute * scalTimestep / 2;
-            vecForceX = (vecForceX - scalDissipationAbsolute .* vecVelX) / Bn_den;
-            vecForceY = (vecForceY - scalDissipationAbsolute .* vecVelY) / Bn_den;
+            scalBnDenominator = 1 + scalDissipationAbsolute * scalTimestep / 2;
+            vecForceX = (vecForceX - scalDissipationAbsolute .* vecVelX) / scalBnDenominator;
+            vecForceY = (vecForceY - scalDissipationAbsolute .* vecVelY) / scalBnDenominator;
             if boolThreeD
-                vecForceZ = (vecForceZ - scalDissipationAbsolute .* vecVelZ) / Bn_den;
+                vecForceZ = (vecForceZ - scalDissipationAbsolute .* vecVelZ) / scalBnDenominator;
             end
         else
             vecForceX = vecForceX - scalDissipationAbsolute .* vecVelX;  % [N x 1]
@@ -786,24 +789,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         end
 
         if boolThreeD
-            vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2 + vecVelZ.^2) / N;
+            vecKineticEnergyHistory(idxStep) = 0.5 * scalMass * sum(vecVelX.^2 + vecVelY.^2 + vecVelZ.^2) / scalNumParticles;
         else
-            vecKineticEnergyHistory(nt) = 0.5 * M * sum(vecVelX.^2 + vecVelY.^2) / N;
+            vecKineticEnergyHistory(idxStep) = 0.5 * scalMass * sum(vecVelX.^2 + vecVelY.^2) / scalNumParticles;
         end
 
         % Rotational kinetic energy (friction) must be included in the
         % convergence check: omega carries energy that the translational KE
         % misses; without it scalEk reads ~0 while omega still oscillates.
         if boolFrictionOn && ~boolThreeD
-            vecInertiaC = 0.5 * M .* (vecDiameter / 2) .^ 2;   % solid-disk moment of inertia
-            vecKineticEnergyHistory(nt) = vecKineticEnergyHistory(nt) ...
-                + 0.5 * sum(vecInertiaC .* vecOmega.^2) / N;
+            vecInertiaC = 0.5 * scalMass .* (vecDiameter / 2) .^ 2;   % solid-disk moment of inertia
+            vecKineticEnergyHistory(idxStep) = vecKineticEnergyHistory(idxStep) ...
+                + 0.5 * sum(vecInertiaC .* vecOmega.^2) / scalNumParticles;
         end
 
-        vecAccelX = vecForceX ./ M;
-        vecAccelY = vecForceY ./ M - scalGravity;
+        vecAccelX = vecForceX ./ scalMass;
+        vecAccelY = vecForceY ./ scalMass - scalGravity;
         if boolThreeD
-            vecAccelZ = vecForceZ ./ M;  % no gravity in Z
+            vecAccelZ = vecForceZ ./ scalMass;  % no gravity in Z
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -841,7 +844,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         scalTotalContacts = sum(vecCoordNum) / 2;
         scalWallContacts = sum(boolLeftWallContact) + sum(boolRightWallContact);
         scalNumRattlers = sum(boolRattler);
-        scalExcessContacts = scalTotalContacts + scalWallContacts - 2*(N - scalNumRattlers);
+        scalExcessContacts = scalTotalContacts + scalWallContacts - 2*(scalNumParticles - scalNumRattlers);
 
         % Mean particle-particle coordination number (full packing, rattlers
         % included). Tracked on every pathway — frictionless and frictional,
@@ -851,28 +854,28 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         scalMeanCoordNum = mean(vecCoordNum);
 
         % Pressure estimate from mean potential energy
-        scalEp = vecPotentialEnergyHistory(nt);
+        scalEp = vecPotentialEnergyHistory(idxStep);
         % Under friction, the tangential spring energy is a constraint DOF,
         % not a compressive load: exclude it from the box-control pressure so
         % the compression target P_target is reached on the NORMAL contacts.
         if boolFrictionOn
-           scalEp = scalEp - scalTangentialPE / N;
+           scalEp = scalEp - scalTangentialPE / scalNumParticles;
         end
-        if options.hertzian
-            scalPressure = (scalEp * (5/2) / K)^(2/5); % this has an implied d= 1 in the denominator
+        if boolHertzian
+            scalPressure = (scalEp * (5/2) / scalSpringConstant)^(2/5); % this has an implied d= 1 in the denominator
         else
-            scalPressure = sqrt(2 * scalEp / K); % this has an implied d= 1 in the denominator
+            scalPressure = sqrt(2 * scalEp / scalSpringConstant); % this has an implied d= 1 in the denominator
         end
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%% COMPRESSION DECISIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        scalEk = vecKineticEnergyHistory(nt);
+        scalEk = vecKineticEnergyHistory(idxStep);
 
         % ===== ENV-GUARDED DIAGNOSTIC (removable; no effect unless GRAN_DIAG set) =====
-        if ~isempty(getenv('GRAN_DIAG')) && mod(nt, 5000) == 0
-            scZnm = mean(vecCoordNum);  % mean particle-particle coordination
-            fprintf('DIAG step=%d Ek=%.4e P=%.4e P/Ptrgt=%.4f Lx=%.4f Zn=%.2f\n', nt, scalEk, scalPressure, scalPressure/P_target, scalBoxWidthX, scZnm);
+        if ~isempty(getenv('GRAN_DIAG')) && mod(idxStep, 5000) == 0
+            scalDiagMeanCoordNum = mean(vecCoordNum);  % mean particle-particle coordination
+            fprintf('DIAG step=%d Ek=%.4e P=%.4e P/Ptrgt=%.4f Lx=%.4f Zn=%.2f\n', idxStep, scalEk, scalPressure, scalPressure/scalPressureTarget, scalBoxWidthX, scalDiagMeanCoordNum);
         end
         % ===== end diagnostic =====
 
@@ -895,14 +898,14 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               % every grain (mechanical equilibrium under PBC). Normalized by
               % the mean contact force so the threshold is scale-free.
               if scalNumContacts > 0
-                  vecNetFx = accumarray(vecContactNN, vecForceContactX, [N 1]) ...
-                           - accumarray(vecContactMM, vecForceContactX, [N 1]) ...
-                           + accumarray(vecContactNN, vecFtX, [N 1]) ...
-                           - accumarray(vecContactMM, vecFtX, [N 1]);
-                  vecNetFy = accumarray(vecContactNN, vecForceContactY, [N 1]) ...
-                           - accumarray(vecContactMM, vecForceContactY, [N 1]) ...
-                           + accumarray(vecContactNN, vecFtY, [N 1]) ...
-                           - accumarray(vecContactMM, vecFtY, [N 1]);
+                  vecNetFx = accumarray(vecContactNN, vecForceContactX, [scalNumParticles 1]) ...
+                           - accumarray(vecContactMM, vecForceContactX, [scalNumParticles 1]) ...
+                           + accumarray(vecContactNN, vecFtX, [scalNumParticles 1]) ...
+                           - accumarray(vecContactMM, vecFtX, [scalNumParticles 1]);
+                  vecNetFy = accumarray(vecContactNN, vecForceContactY, [scalNumParticles 1]) ...
+                           - accumarray(vecContactMM, vecForceContactY, [scalNumParticles 1]) ...
+                           + accumarray(vecContactNN, vecFtY, [scalNumParticles 1]) ...
+                           - accumarray(vecContactMM, vecFtY, [scalNumParticles 1]);
                   vecFnetMag     = sqrt(vecNetFx.^2 + vecNetFy.^2);
                   scalMaxFnet    = max(vecFnetMag);
                   scalMeanFc     = mean([abs(vecForceMag); abs(vecFtMag)]);
@@ -921,16 +924,16 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
               % network does not percolate; hold in-band. Reversing direction
               % means P_target was overshot, so the strain step is halved
               % (bisection on the box size) down to scalFrictionStrainMin.
-              boolRelaxed = (nt - scalFrictionLastResize >= scalFrictionRelaxSteps) && ...
+              boolRelaxed = (idxStep - scalFrictionLastResize >= scalFrictionRelaxSteps) && ...
                   (scalForceRatio < scalFrictionForceTol || ...
                    scalEk < scalFrictionRelaxKE * scalFrictionEpTarget);
               scalFrictionDir = 0;    % -1 compress, +1 expand, 0 hold
               if scalPressure < scalPressureFastGrow
                   scalFrictionDir = -1;
               elseif boolRelaxed
-                  if scalPressure > P_target * (1 + scalFrictionDeadBand)
+                  if scalPressure > scalPressureTarget * (1 + scalFrictionDeadBand)
                       scalFrictionDir = 1;
-                  elseif scalPressure < P_target * (1 - scalFrictionDeadBand) || ...
+                  elseif scalPressure < scalPressureTarget * (1 - scalFrictionDeadBand) || ...
                           scalMeanCoordNum < scalFrictionZmin
                       scalFrictionDir = -1;
                   end
@@ -947,14 +950,14 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                   vecPosY = vecPosY * scalStrainFactor;
                   boolCellUpdateNeeded = true;
                   scalFrictionLastDir    = scalFrictionDir;
-                  scalFrictionLastResize = nt;
+                  scalFrictionLastResize = idxStep;
               end
 
               % Acceptance: P in-band, contact network percolates, box held, and
               % sustained force balance. The percolation guard (mean Zn) plus the
               % "box held" guard prevent accepting a loose, unjammed state whose
               % net force is trivially small simply because it carries no load.
-              boolInBand   = abs(scalPressure - P_target) / P_target < scalFrictionDeadBand;
+              boolInBand   = abs(scalPressure - scalPressureTarget) / scalPressureTarget < scalFrictionDeadBand;
               boolPercol   = (scalMeanCoordNum >= scalFrictionZmin);
               boolBalanced = (scalForceRatio < scalFrictionForceTol);
               if boolInBand && boolPercol && boolBalanced && ~boolBoxMoved
@@ -963,22 +966,22 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                   scalFrictionBalCount = 0;
               end
 
-              if mod(nt, 5000) == 0
+              if mod(idxStep, 5000) == 0
                   fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f | balCount=%d\n', ...
-                      nt, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount);
+                      idxStep, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount);
               end
               if scalFrictionBalCount >= scalFrictionBalWindow
                   fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
+                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
                   break;
-              elseif nt >= scalFrictionMaxSteps
+              elseif idxStep >= scalFrictionMaxSteps
                   fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      nt, scalPressure, scalPressure / P_target, scalForceRatio, scalMeanCoordNum);
+                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalForceRatio, scalMeanCoordNum);
                   break;
               end
         elseif boolFastCompressPhase
             % ===== Fast-compress phase (frictionless two-stage) =====
-            if scalPressure < P_target/50
+            if scalPressure < scalPressureTarget/50
                 scalBoxWidthX= scalBoxWidthX * (1-scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRateFast);
                 vecPosX = vecPosX * (1-scalCompressionRateFast);
@@ -988,8 +991,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
                 end
                 boolCellUpdateNeeded = true;
-                scalLastCompressStep = nt;
-            elseif scalPressure < P_target && scalEk < 1e-8
+                scalLastCompressStep = idxStep;
+            elseif scalPressure < scalPressureTarget && scalEk < 1e-8
                 scalBoxWidthX   = scalBoxWidthX * (1-scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1-scalCompressionRateFast);
                 vecPosX = vecPosX * (1-scalCompressionRateFast);
@@ -999,8 +1002,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     vecPosZ = vecPosZ * (1-scalCompressionRateFast);
                 end
                 boolCellUpdateNeeded = true;
-                scalLastCompressStep = nt;
-            elseif scalPressure > P_target && scalEk < 1e-10 && nt > (scalLastCompressStep+100)
+                scalLastCompressStep = idxStep;
+            elseif scalPressure > scalPressureTarget && scalEk < 1e-10 && idxStep > (scalLastCompressStep+100)
                 scalBoxWidthX   = scalBoxWidthX * (1+scalCompressionRateFast);
                 scalBoxHeightY = scalBoxHeightY * (1+scalCompressionRateFast);
                 vecPosX = vecPosX * (1+scalCompressionRateFast);
@@ -1010,7 +1013,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     vecPosZ = vecPosZ * (1+scalCompressionRateFast);
                 end
                 boolCellUpdateNeeded = true;
-                scalLastCompressStep = nt;
+                scalLastCompressStep = idxStep;
                 boolFastCompressPhase = false;
             end
         else
@@ -1025,8 +1028,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     vecPosZ = vecPosZ * (1 - scalCompressionRate);
                 end
                 boolCellUpdateNeeded = true;
-                scalLastCompressStep = nt;
-             elseif scalPressure < P_target && scalEk < 1e-8
+                scalLastCompressStep = idxStep;
+             elseif scalPressure < scalPressureTarget && scalEk < 1e-8
                 scalBoxWidthX    = scalBoxWidthX     * (1 - scalCompressionRate);
                 scalBoxHeightY    = scalBoxHeightY    * (1 - scalCompressionRate);
                 vecPosX = vecPosX * (1 - scalCompressionRate);
@@ -1036,8 +1039,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     vecPosZ = vecPosZ * (1 - scalCompressionRate);
                 end
                 boolCellUpdateNeeded = true;
-                scalLastCompressStep = nt;
-             elseif scalPressure > P_target
+                scalLastCompressStep = idxStep;
+             elseif scalPressure > scalPressureTarget
                  % Frictionless slow phase: a flat pressure plateau is the sign
                  % of a settled packing (energy < 1e-20 is unreachable). Track a
                  % frozen box — |Lx - Lx_prev| staying near zero for
@@ -1050,7 +1053,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                  scalLxPrevSlow = scalBoxWidthX;
                  if scalLxFrozenSlow >= scalSlowConvSteps
                      fprintf('Frictionless converged at step %d | P=%.4e P/P_target=%.3f Lx=%.4f\n', ...
-                        nt, scalPressure, scalPressure / P_target, scalBoxWidthX);
+                        idxStep, scalPressure, scalPressure / scalPressureTarget, scalBoxWidthX);
                      break;
                  end
              end
@@ -1061,46 +1064,61 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
             %%  Downstream frictional linear-response pipeline uses
             %%  fricState to assemble the full frictional Hessian.
     if boolFrictionOn && boolSaveFricState
-        fricState = buildFricState( ...
+        sFricState = buildFricState( ...
             vecPosX, vecPosY, vecDiameter, ...
             scalBoxWidthX, scalBoxHeightY, ...
-            matDispTan, K, scalKt, scalMu, ...
-            scalGammaNormal, scalGammaTangential, M);
+            matDispTan, scalSpringConstant, scalKt, scalMu, ...
+            scalGammaNormal, scalGammaTangential, scalMass);
         strFricFilename = [strFilename(1:end-4) '_FricState.mat'];
-        save(strFricFilename, 'fricState');
+        sFricStateFile.fricState = sFricState;   % stored in the .mat as 'fricState'
+        save(strFricFilename, '-struct', 'sFricStateFile');
         fprintf('fricState saved to: %s\n', strFricFilename);
     end
 
-    fprintf('Loop finished at step %d.\n', nt);
+    fprintf('Loop finished at step %d.\n', idxStep);
     if boolFricGif
         % final (converged) frame, held on screen longer than the others
         [~, boolFricGif] = writeFricGifFrame(hFigGif, strGifFilename, vecGifFrameSize, ...
             vecPosX, vecPosY, vecDiameter, vecTheta, scalBoxWidthX, scalBoxHeightY, ...
-            fricGifTitle('Final frictional packing', nt, scalPressure, P_target, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 2);
+            fricGifTitle('Final frictional packing', idxStep, scalPressure, scalPressureTarget, vecDiameter, scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu), 2);
         if boolFricGif
             fprintf('Frictional compression GIF saved to: %s\n', strGifFilename);
         end
     end
-    N_original = numel(vecPosX);  % particle count before cleanRats (for plot titles)
+    scalNumParticlesOriginal = numel(vecPosX);  % particle count before cleanRats (for plot titles)
 
     %% Snapshot the FULL jammed state (all N particles, rattlers included)
     %    BEFORE cleanRats, for tile-based repetition (see the tiling block at
     %    the end of this file). The per-step box rescalings already wrap
     %    positions into [0, L), so every coordinate is in-box; the 3D tiler
     %    reproduces this state exactly across tile boundaries. Gated on
-    %    options.saveFullState so default callers keep byte-identical output.
-    if options.saveFullState
+    %    sOptions.saveFullState so default callers keep byte-identical output.
+    if boolSaveFullState
+        % The variable names stored in the .mat (K, P_target, N_original,
+        % seed, ...) are the file format that packRepeatTile and other
+        % loaders read, so they are kept as the field names of the struct
+        % that save -struct writes out (one variable per field; the field
+        % list is passed explicitly so Octave keeps this order too).
+        sFullStateFile = struct();
+        sFullStateFile.vecPosX = vecPosX;
+        sFullStateFile.vecPosY = vecPosY;
         if boolThreeD
-            save(strFullFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                'K', 'P_target', 'scalPressure', 'N_original', 'seed', ...
-                'scalRoundedWidth');
-        else
-            save(strFullFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', ...
-                'K', 'P_target', 'scalPressure', 'N_original', 'seed', ...
-                'scalRoundedWidth');
+            sFullStateFile.vecPosZ = vecPosZ;
         end
+        sFullStateFile.vecDiameter    = vecDiameter;
+        sFullStateFile.scalBoxWidthX  = scalBoxWidthX;
+        sFullStateFile.scalBoxHeightY = scalBoxHeightY;
+        if boolThreeD
+            sFullStateFile.scalBoxDepthZ = scalBoxDepthZ;
+        end
+        sFullStateFile.K                = scalSpringConstant;
+        sFullStateFile.P_target         = scalPressureTarget;
+        sFullStateFile.scalPressure     = scalPressure;
+        sFullStateFile.N_original       = scalNumParticlesOriginal;
+        sFullStateFile.seed             = scalSeed;
+        sFullStateFile.scalRoundedWidth = scalRoundedWidth;
+        cellFullStateFields = fieldnames(sFullStateFile);
+        save(strFullFilename, '-struct', 'sFullStateFile', cellFullStateFields{:});
         % Keep an in-memory copy for the 3D repeat-tile block at the end of
         % this file: after cleanRats the local position/diameter variables are
         % rebound to the BACKBONE, so the full (rattler-inclusive) state must
@@ -1108,7 +1126,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecTileSrcX = vecPosX;
         vecTileSrcY = vecPosY;
         vecTileSrcD = vecDiameter;
-        NTileSrc    = N;   % full per-tile particle count (rattlers included)
+        scalNumParticlesTileSrc = scalNumParticles;   % full per-tile particle count (rattlers included)
         if boolThreeD
             vecTileSrcZ = vecPosZ;
         end
@@ -1154,29 +1172,31 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     figure;
     hold on;
     if boolThreeD
-        [sx, sy, sz] = sphere(16);
+        [matSphereX, matSphereY, matSphereZ] = sphere(16);
 
         % Main particles (full pre-cleanRats packing)
-        for np = 1:N
-            r = vecDiameter(np)/2;
-            surf(r*sx + vecPosX(np), r*sy + vecPosY(np), r*sz + vecPosZ(np), ...
+        for idxParticle = 1:scalNumParticles
+            scalRadius = vecDiameter(idxParticle)/2;
+            surf(scalRadius*matSphereX + vecPosX(idxParticle), ...
+                 scalRadius*matSphereY + vecPosY(idxParticle), ...
+                 scalRadius*matSphereZ + vecPosZ(idxParticle), ...
                 'FaceColor', 'b', 'EdgeColor', 'none', 'FaceAlpha', 0.6);
         end
 
         % Ghost particles on +x, +y, +z faces
-        vecOffsets = [scalBoxWidthX, 0, 0; ...
-                      0, scalBoxHeightY, 0; ...
-                      0, 0, scalBoxDepthZ];  % [3 x 3] one offset per face
+        matOffsets3D = [scalBoxWidthX, 0, 0; ...
+                        0, scalBoxHeightY, 0; ...
+                        0, 0, scalBoxDepthZ];  % [3 x 3] one offset per face
 
-        for iface = 1:3
-            ox = vecOffsets(iface, 1);
-            oy = vecOffsets(iface, 2);
-            oz = vecOffsets(iface, 3);
-            for np = 1:N
-                r = vecDiameter(np)/2;
-                surf(r*sx + vecPosX(np) + ox, ...
-                     r*sy + vecPosY(np) + oy, ...
-                     r*sz + vecPosZ(np) + oz, ...
+        for idxFace = 1:3
+            scalOffsetX = matOffsets3D(idxFace, 1);
+            scalOffsetY = matOffsets3D(idxFace, 2);
+            scalOffsetZ = matOffsets3D(idxFace, 3);
+            for idxParticle = 1:scalNumParticles
+                scalRadius = vecDiameter(idxParticle)/2;
+                surf(scalRadius*matSphereX + vecPosX(idxParticle) + scalOffsetX, ...
+                     scalRadius*matSphereY + vecPosY(idxParticle) + scalOffsetY, ...
+                     scalRadius*matSphereZ + vecPosZ(idxParticle) + scalOffsetZ, ...
                     'FaceColor', 'r', 'EdgeColor', 'none', 'FaceAlpha', 0.15);
             end
         end
@@ -1190,19 +1210,19 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         lighting gouraud;
         camlight;
         rotate3d on;
-        title(sprintf('Before cleanRats: N=%d, phi=%.4f', N, scalPackingFractionFull));
+        title(sprintf('Before cleanRats: N=%d, phi=%.4f', scalNumParticles, scalPackingFractionFull));
 
     else
         % Main particles (full pre-cleanRats packing)
-        for np = 1:N
-            rectangle('Position', [vecPosX(np) - vecDiameter(np)/2, ...
-                                    vecPosY(np) - vecDiameter(np)/2, ...
-                                    vecDiameter(np), vecDiameter(np)], ...
+        for idxParticle = 1:scalNumParticles
+            rectangle('Position', [vecPosX(idxParticle) - vecDiameter(idxParticle)/2, ...
+                                    vecPosY(idxParticle) - vecDiameter(idxParticle)/2, ...
+                                    vecDiameter(idxParticle), vecDiameter(idxParticle)], ...
                 'Curvature', [1 1], 'FaceColor', 'b', 'EdgeColor', 'none');
         end
 
         % Ghost particles: all 8 surrounding tiles
-        vecOffsets2D = [scalBoxWidthX,  0; ...
+        matOffsets2D = [scalBoxWidthX,  0; ...
                        -scalBoxWidthX,  0; ...
                         0,  scalBoxHeightY; ...
                         0, -scalBoxHeightY; ...
@@ -1211,13 +1231,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                         scalBoxWidthX, -scalBoxHeightY; ...
                        -scalBoxWidthX, -scalBoxHeightY];
 
-        for iface = 1:8
-            ox = vecOffsets2D(iface, 1);
-            oy = vecOffsets2D(iface, 2);
-            for np = 1:N
-                rectangle('Position', [vecPosX(np) + ox - vecDiameter(np)/2, ...
-                                        vecPosY(np) + oy - vecDiameter(np)/2, ...
-                                        vecDiameter(np), vecDiameter(np)], ...
+        for idxFace = 1:8
+            scalOffsetX = matOffsets2D(idxFace, 1);
+            scalOffsetY = matOffsets2D(idxFace, 2);
+            for idxParticle = 1:scalNumParticles
+                rectangle('Position', [vecPosX(idxParticle) + scalOffsetX - vecDiameter(idxParticle)/2, ...
+                                        vecPosY(idxParticle) + scalOffsetY - vecDiameter(idxParticle)/2, ...
+                                        vecDiameter(idxParticle), vecDiameter(idxParticle)], ...
                     'Curvature', [1 1], 'FaceColor', 'r', 'EdgeColor', 'none', ...
                     'FaceAlpha', 0.15);
             end
@@ -1225,13 +1245,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         axis equal;
         axis([-scalBoxWidthX 2*scalBoxWidthX -scalBoxHeightY 2*scalBoxHeightY]);
-        title(sprintf('Before cleanRats: N=%d, phi=%.4f', N, scalPackingFractionFull));
+        title(sprintf('Before cleanRats: N=%d, phi=%.4f', scalNumParticles, scalPackingFractionFull));
     end
     drawnow;
     hold off;
 
     % Export the before-cleanRats packing photo. strFilename already includes
-    % save_path, so just swap the extension; the export mirrors the .mat's
+    % strSavePath, so just swap the extension; the export mirrors the .mat's
     % own path resolution, and a failed export never aborts the run.
     % Frictional runs get a '_Fric' tag so their photos don't clobber the
     % frictionless ones (the .mat names for the two 2D pathways collide).
@@ -1243,8 +1263,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         strBeforePng = [strFilename(1:end-4) strPngTag '_BeforeCleanRats.png'];
         print(gcf, strBeforePng, '-dpng', '-r120');
         fprintf('Packing photo saved to: %s\n', strBeforePng);
-    catch ME
-        warning('pack:PNGExportFailed', 'Could not export before-cleanRats plot: %s', ME.message);
+    catch sBeforePngME
+        warning('pack:PNGExportFailed', 'Could not export before-cleanRats plot: %s', sBeforePngME.message);
     end
 
     % TODO: need to decide logic if I want to use PBC or not
@@ -1259,15 +1279,15 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     else
         matPositions = [vecPosX, vecPosY];
         vecRadii = vecDiameter ./ 2;
-         mu_cleanRats = scalMu * boolFrictionOn;
-         [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, [], false, mu_cleanRats);
+         scalMuCleanRats = scalMu * boolFrictionOn;
+         [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, [], false, scalMuCleanRats);
         vecPosX = matPositions(:,1);
         vecPosY = matPositions(:,2);
     end
     vecDiameter = vecRadii .* 2;
-    N_clean = size(matPositions, 1);
-    fprintf('cleanRats complete. %d particles remaining (of %d original).\n', N_clean, N);
-    if N_clean == 0
+    scalNumParticlesClean = size(matPositions, 1);
+    fprintf('cleanRats complete. %d particles remaining (of %d original).\n', scalNumParticlesClean, scalNumParticles);
+    if scalNumParticlesClean == 0
         warning('All particles removed by cleanRats — packing did not jam. Skipping save.');
         return;
     end
@@ -1283,11 +1303,11 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     fprintf('Mean coordination number after cleanRats: %.4f\n', scalMeanCoordNum);
 
 %% Compute linearized Hertzian contact stiffnesses at jammed state
-    if options.hertzian
+    if boolHertzian
 
         % update data because cleanRats may have removed particles
-        vecRadii_final  = vecDiameter ./ 2;
-        matContactDist_final = (vecDiameter + vecDiameter') / 2;
+        vecRadiiFinal       = vecDiameter ./ 2;
+        matContactDistFinal = (vecDiameter + vecDiameter') / 2;
         scalNumFinal = numel(vecPosX);
 
         vecHertzNN = zeros(scalNumFinal * 12, 1);
@@ -1295,32 +1315,32 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         vecHertzKeff  = zeros(scalNumFinal * 12, 1);
         scalNumHertzContacts = 0;
 
-        for ii = 1:scalNumFinal
-            for jj = ii+1:scalNumFinal
-                dx = vecPosX(jj) - vecPosX(ii);
-                dy = vecPosY(jj) - vecPosY(ii);
-                dx = dx - scalBoxWidthX * round(dx / scalBoxWidthX);
-                dy = dy - scalBoxHeightY * round(dy / scalBoxHeightY);
+        for idxNN = 1:scalNumFinal
+            for idxMM = idxNN+1:scalNumFinal
+                scalSepX = vecPosX(idxMM) - vecPosX(idxNN);
+                scalSepY = vecPosY(idxMM) - vecPosY(idxNN);
+                scalSepX = scalSepX - scalBoxWidthX * round(scalSepX / scalBoxWidthX);
+                scalSepY = scalSepY - scalBoxHeightY * round(scalSepY / scalBoxHeightY);
                 if boolThreeD
-                    dz = vecPosZ(jj) - vecPosZ(ii);
-                    dz = dz - scalBoxDepthZ * round(dz / scalBoxDepthZ);
-                    scalDist = sqrt(dx^2 + dy^2 + dz^2);
+                    scalSepZ = vecPosZ(idxMM) - vecPosZ(idxNN);
+                    scalSepZ = scalSepZ - scalBoxDepthZ * round(scalSepZ / scalBoxDepthZ);
+                    scalDist = sqrt(scalSepX^2 + scalSepY^2 + scalSepZ^2);
                 else
-                    scalDist = sqrt(dx^2 + dy^2);
+                    scalDist = sqrt(scalSepX^2 + scalSepY^2);
                 end
 
-                scalSumRadii = matContactDist_final(ii, jj); % grab the minimum distanced needed for contact
+                scalSumRadii = matContactDistFinal(idxNN, idxMM); % grab the minimum distanced needed for contact
                 scalDelta = scalSumRadii - scalDist; % if negative, no contact
 
                 % Go through each contact and assign k = dF/d(delta) for F_hertzian
                 if scalDelta > 0
-                    scalReff = (vecRadii_final(ii) * vecRadii_final(jj)) / scalSumRadii; % effective radius from curvature
-                    scalKeff = 2 * K * sqrt(scalReff * scalDelta); % k_eff = dF/d(delta)
+                    scalReff = (vecRadiiFinal(idxNN) * vecRadiiFinal(idxMM)) / scalSumRadii; % effective radius from curvature
+                    scalKeff = 2 * scalSpringConstant * sqrt(scalReff * scalDelta); % k_eff = dF/d(delta)
                     scalNumHertzContacts = scalNumHertzContacts + 1; % this is indexes, so +1 because matlab isbase 1 
 
                     % assign row (scalNumHertzContacts) a particle, the particle it's in contact with, and an k_eff
-                    vecHertzNN(scalNumHertzContacts) = ii; 
-                    vecHertzMM(scalNumHertzContacts) = jj;
+                    vecHertzNN(scalNumHertzContacts) = idxNN; 
+                    vecHertzMM(scalNumHertzContacts) = idxMM;
                     vecHertzKeff(scalNumHertzContacts) = scalKeff;
                 end
 
@@ -1341,29 +1361,31 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     figure;
     hold on;
     if boolThreeD
-        [sx, sy, sz] = sphere(16);
+        [matSphereX, matSphereY, matSphereZ] = sphere(16);
 
         % Main particles
-        for np = 1:N_clean
-            r = vecDiameter(np)/2;
-            surf(r*sx + vecPosX(np), r*sy + vecPosY(np), r*sz + vecPosZ(np), ...
+        for idxParticle = 1:scalNumParticlesClean
+            scalRadius = vecDiameter(idxParticle)/2;
+            surf(scalRadius*matSphereX + vecPosX(idxParticle), ...
+                 scalRadius*matSphereY + vecPosY(idxParticle), ...
+                 scalRadius*matSphereZ + vecPosZ(idxParticle), ...
                 'FaceColor', 'b', 'EdgeColor', 'none', 'FaceAlpha', 0.6);
         end
 
         % Ghost particles on +x, +y, +z faces
-        vecOffsets = [scalBoxWidthX, 0, 0; ...
-                      0, scalBoxHeightY, 0; ...
-                      0, 0, scalBoxDepthZ];  % [3 x 3] one offset per face
+        matOffsets3D = [scalBoxWidthX, 0, 0; ...
+                        0, scalBoxHeightY, 0; ...
+                        0, 0, scalBoxDepthZ];  % [3 x 3] one offset per face
 
-        for iface = 1:3
-            ox = vecOffsets(iface, 1);
-            oy = vecOffsets(iface, 2);
-            oz = vecOffsets(iface, 3);
-            for np = 1:N_clean
-                r = vecDiameter(np)/2;
-                surf(r*sx + vecPosX(np) + ox, ...
-                     r*sy + vecPosY(np) + oy, ...
-                     r*sz + vecPosZ(np) + oz, ...
+        for idxFace = 1:3
+            scalOffsetX = matOffsets3D(idxFace, 1);
+            scalOffsetY = matOffsets3D(idxFace, 2);
+            scalOffsetZ = matOffsets3D(idxFace, 3);
+            for idxParticle = 1:scalNumParticlesClean
+                scalRadius = vecDiameter(idxParticle)/2;
+                surf(scalRadius*matSphereX + vecPosX(idxParticle) + scalOffsetX, ...
+                     scalRadius*matSphereY + vecPosY(idxParticle) + scalOffsetY, ...
+                     scalRadius*matSphereZ + vecPosZ(idxParticle) + scalOffsetZ, ...
                     'FaceColor', 'r', 'EdgeColor', 'none', 'FaceAlpha', 0.15);
             end
         end
@@ -1377,19 +1399,19 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         lighting gouraud;
         camlight;
         rotate3d on;
-        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', N_clean, N_original, scalMeanCoordNum));
+        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', scalNumParticlesClean, scalNumParticlesOriginal, scalMeanCoordNum));
 
     else
         % Main particles
-        for np = 1:N_clean
-            rectangle('Position', [vecPosX(np) - vecDiameter(np)/2, ...
-                                    vecPosY(np) - vecDiameter(np)/2, ...
-                                    vecDiameter(np), vecDiameter(np)], ...
+        for idxParticle = 1:scalNumParticlesClean
+            rectangle('Position', [vecPosX(idxParticle) - vecDiameter(idxParticle)/2, ...
+                                    vecPosY(idxParticle) - vecDiameter(idxParticle)/2, ...
+                                    vecDiameter(idxParticle), vecDiameter(idxParticle)], ...
                 'Curvature', [1 1], 'FaceColor', 'b', 'EdgeColor', 'none');
         end
 
         % Ghost particles: all 8 surrounding tiles
-        vecOffsets2D = [scalBoxWidthX,  0; ...
+        matOffsets2D = [scalBoxWidthX,  0; ...
                        -scalBoxWidthX,  0; ...
                         0,  scalBoxHeightY; ...
                         0, -scalBoxHeightY; ...
@@ -1398,13 +1420,13 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                         scalBoxWidthX, -scalBoxHeightY; ...
                        -scalBoxWidthX, -scalBoxHeightY];
 
-        for iface = 1:8
-            ox = vecOffsets2D(iface, 1);
-            oy = vecOffsets2D(iface, 2);
-            for np = 1:N_clean
-                rectangle('Position', [vecPosX(np) + ox - vecDiameter(np)/2, ...
-                                        vecPosY(np) + oy - vecDiameter(np)/2, ...
-                                        vecDiameter(np), vecDiameter(np)], ...
+        for idxFace = 1:8
+            scalOffsetX = matOffsets2D(idxFace, 1);
+            scalOffsetY = matOffsets2D(idxFace, 2);
+            for idxParticle = 1:scalNumParticlesClean
+                rectangle('Position', [vecPosX(idxParticle) + scalOffsetX - vecDiameter(idxParticle)/2, ...
+                                        vecPosY(idxParticle) + scalOffsetY - vecDiameter(idxParticle)/2, ...
+                                        vecDiameter(idxParticle), vecDiameter(idxParticle)], ...
                     'Curvature', [1 1], 'FaceColor', 'r', 'EdgeColor', 'none', ...
                     'FaceAlpha', 0.15);
             end
@@ -1412,7 +1434,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 
         axis equal;
         axis([-scalBoxWidthX 2*scalBoxWidthX -scalBoxHeightY 2*scalBoxHeightY]);
-        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', N_clean, N_original, scalMeanCoordNum));
+        title(sprintf('After cleanRats: N=%d (of %d original), mean coord num=%.2f', scalNumParticlesClean, scalNumParticlesOriginal, scalMeanCoordNum));
     end
     drawnow;
     hold off;
@@ -1426,25 +1448,24 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
         strAfterPng = [strFilename(1:end-4) strPngTag '_AfterCleanRats.png'];
         print(gcf, strAfterPng, '-dpng', '-r120');
         fprintf('Packing photo saved to: %s\n', strAfterPng);
-    catch ME
-        warning('pack:PNGExportFailed', 'Could not export after-cleanRats plot: %s', ME.message);
+    catch sAfterPngME
+        warning('pack:PNGExportFailed', 'Could not export after-cleanRats plot: %s', sAfterPngME.message);
     end
 
 %% Save results
 
     % if boolThreeD
-    %     scalRoundedWidth = round(N^(1/3));
+    %     scalRoundedWidth = round(scalNumParticles^(1/3));
     %     strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-    %         save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    %         strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
     % else
-    %     scalRoundedWidth = round(sqrt(N));
+    %     scalRoundedWidth = round(sqrt(scalNumParticles));
     %     strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-    %         save_path, N, num2str(P_target), scalRoundedWidth, seed);
+    %         strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
     % end
 
-    N_original = N;
-    N_clean = size(matPositions, 1);
-    N = N_clean;
+    scalNumParticlesOriginal = scalNumParticles;
+    scalNumParticlesClean = size(matPositions, 1);
 
     % Compute packing fraction after cleanRats
     if boolThreeD
@@ -1454,62 +1475,58 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     end
     fprintf('Packing fraction after cleanRats: %.4f\n', scalPackingFraction);
 
-    if calc_eig
+    if boolCalcEig
         % 3D hessian not yet implemented — skip eigenmodes
         if boolThreeD
             warning('calc_eig not supported for 3D yet — saving positions only.');
-            if options.hertzian
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
-            else
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
-            end
         else
             matPositions = [vecPosX, vecPosY];
             vecRadii = vecDiameter ./ 2;
-            [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightY, scalBoxWidthX);
-            matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightY, scalBoxWidthX);
+            [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalSpringConstant, scalBoxHeightY, scalBoxWidthX);
+            matHessian = hess2d(matPositions, vecRadii, scalSpringConstant, scalBoxHeightY, scalBoxWidthX);
             [matEigenVectors, matEigenValues] = eig(matHessian);
-            if options.hertzian
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                    'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
-            else
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                    'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues', 'boolFrictionOn', 'scalMu', 'scalKt');
-            end
-        end
-    else
-        if boolThreeD
-            if options.hertzian
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
-            else
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                    'K', 'P_target', 'scalPressure', 'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
-            end
-        else
-            if options.hertzian
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
-                    'vecHertzNN', 'vecHertzMM', 'vecHertzKeff', 'boolFrictionOn', 'scalMu', 'scalKt');
-            else
-                save(strFilename, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-                    'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-                    'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
-            end
         end
     end
+
+    % Backbone .mat: the stored variable names (K, P_target, N, N_original,
+    % ...) are the file format that simMD, packRepeatTile and the tests
+    % load, so they are kept as the field names of the struct that
+    % save -struct writes out (one variable per field; the field list is
+    % passed explicitly so Octave keeps this order too).
+    sPackingFile = struct();
+    sPackingFile.vecPosX = vecPosX;
+    sPackingFile.vecPosY = vecPosY;
+    if boolThreeD
+        sPackingFile.vecPosZ = vecPosZ;
+    end
+    sPackingFile.vecDiameter    = vecDiameter;
+    sPackingFile.scalBoxWidthX  = scalBoxWidthX;
+    sPackingFile.scalBoxHeightY = scalBoxHeightY;
+    if boolThreeD
+        sPackingFile.scalBoxDepthZ = scalBoxDepthZ;
+    end
+    sPackingFile.K                       = scalSpringConstant;
+    sPackingFile.P_target                = scalPressureTarget;
+    sPackingFile.scalPressure            = scalPressure;
+    sPackingFile.N                       = scalNumParticlesClean;      % backbone count
+    sPackingFile.N_original              = scalNumParticlesOriginal;   % count before cleanRats
+    sPackingFile.scalPackingFraction     = scalPackingFraction;
+    sPackingFile.scalPackingFractionFull = scalPackingFractionFull;
+    sPackingFile.scalMeanCoordNum        = scalMeanCoordNum;
+    if boolCalcEig && ~boolThreeD
+        sPackingFile.matEigenVectors = matEigenVectors;
+        sPackingFile.matEigenValues  = matEigenValues;
+    end
+    if boolHertzian
+        sPackingFile.vecHertzNN   = vecHertzNN;
+        sPackingFile.vecHertzMM   = vecHertzMM;
+        sPackingFile.vecHertzKeff = vecHertzKeff;
+    end
+    sPackingFile.boolFrictionOn = boolFrictionOn;
+    sPackingFile.scalMu         = scalMu;
+    sPackingFile.scalKt         = scalKt;
+    cellPackingFields = fieldnames(sPackingFile);
+    save(strFilename, '-struct', 'sPackingFile', cellPackingFields{:});
 
     fprintf('File saved to: %s\n', strFilename);
 
@@ -1519,8 +1536,8 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
     %   user-visible superlattice repeats the exact simulated state, and
     %   rattler positions must line up across the periodic boundary.
     if boolThreeD
-        if x_mult ~= 1 || y_mult ~= 1 || z_mult ~= 1
-            if ~options.saveFullState
+        if scalXMult ~= 1 || scalYMult ~= 1 || scalZMult ~= 1
+            if ~boolSaveFullState
                 error('pack:NeedFullStateFor3DTile', ...
                     ['3D repeat-tile requires the full (pre-cleanRats) state. ', ...
                      'Call pack(..., options) with options.saveFullState = true.']);
@@ -1530,7 +1547,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                 scalNTiled] = tile3D( ...
                 vecTileSrcX, vecTileSrcY, vecTileSrcZ, vecTileSrcD, ...
                 scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ, ...
-                x_mult, y_mult, z_mult, NTileSrc);
+                scalXMult, scalYMult, scalZMult, scalNumParticlesTileSrc);
 
             % Metrics on the tiled packing (rattlers included, matching the
             % stored particles). Packing fraction is identical to the base
@@ -1554,58 +1571,72 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
                     scalBoxWidthX, scalBoxHeightY, vecTileSrcZ, scalBoxDepthZ);
             end
             fprintf('3D tiled packing: N=%d (of %d per tile), PF=%.4f, mean coordination number=%.4f\n', ...
-                scalNTiled, NTileSrc, scalPackingFractionTiled, scalMeanCoordNumTiled);
+                scalNTiled, scalNumParticlesTileSrc, scalPackingFractionTiled, scalMeanCoordNumTiled);
 
-            % Tiled output filename: 3D_N%d_P%s_Width%d_Seed%d_TiledX<xm>Y<ym>Z<zm>.mat
-            % (backbone file naming is 3D_N%d_P%s_Width%d_Seed%d[_Hertz].mat,
-            %  so the _TiledX..Y..Z.. tag keeps the two distinct and records
-            %  every multiplier — a pure-z tiling is ..._TiledX1Y1Z9.)
-            if options.hertzian
-                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_TiledX%dY%dZ%d_Hertz.mat', ...
-                    save_path, scalNTiled, num2str(P_target), scalRoundedWidth, seed, x_mult, y_mult, z_mult);
+            % Tiled output filename: the normal packing name,
+            % 3D_N%d_P%s_Width%d_Seed%d[_Hertz].mat, with N = the TILED particle
+            % count, so simMD finds it like any other packing. Width and Seed
+            % are the base tile's; the multipliers are stored inside the file
+            % (x_mult, y_mult, z_mult). N differs from the base tile's, so this
+            % never overwrites the backbone file.
+            if boolHertzian
+                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
+                    strSavePath, scalNTiled, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
             else
-                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_TiledX%dY%dZ%d.mat', ...
-                    save_path, scalNTiled, num2str(P_target), scalRoundedWidth, seed, x_mult, y_mult, z_mult);
+                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
+                    strSavePath, scalNTiled, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
             end
-
-            % Alias the canonical variable names to the TILED state so the
-            % save() below records the superlattice, not the backbone.
-            vecPosX        = vecPosXFinal;
-            vecPosY        = vecPosYFinal;
-            vecPosZ        = vecPosZFinal;
-            vecDiameter    = vecDiameterFinal;
-            scalBoxWidthX  = scalBoxWidthXTiled;
-            scalBoxHeightY = scalBoxHeightYFinal;
-            scalBoxDepthZ  = scalBoxDepthZFinal;
-            N              = scalNTiled;
-            N_original     = scalNTiled;   % full (pre-cleanRats) tiled state
-            scalPackingFraction    = scalPackingFractionTiled;
-            scalPackingFractionFull = scalPackingFractionFullTiled;
-            scalMeanCoordNum       = scalMeanCoordNumTiled;
 
             % Save the TILED (superlattice) packing — the full pre-cleanRats
             % state repeated across the tile grid — not the backbone. The
-            % variable names match the backbone .mat convention (vecPosX, N,
-            % scalPackingFraction, ...) so downstream loaders are unchanged.
-            save(strTiledFilename, ...
-                'vecPosX', 'vecPosY', 'vecPosZ', 'vecDiameter', ...
-                'scalBoxWidthX', 'scalBoxHeightY', 'scalBoxDepthZ', ...
-                'K', 'P_target', 'scalPressure', 'N', 'N_original', ...
-                'scalPackingFraction', 'scalPackingFractionFull', 'scalMeanCoordNum', ...
-                'boolFrictionOn', 'scalMu', 'scalKt', ...
-                'x_mult', 'y_mult', 'z_mult', ...
-                'vecPosXFinal', 'vecPosYFinal', 'vecPosZFinal', 'vecDiameterFinal', ...
-                'scalBoxWidthXTiled', 'scalBoxHeightYFinal', 'scalBoxDepthZFinal', ...
-                'scalNTiled', 'NTileSrc', ...
-                'scalPackingFractionTiled', 'scalPackingFractionFullTiled', 'scalMeanCoordNumTiled');
+            % stored variable names match the backbone .mat convention
+            % (vecPosX, N, scalPackingFraction, ...) so downstream loaders are
+            % unchanged; save -struct writes one variable per field, in the
+            % order of the explicit field list.
+            sTiledFile = struct();
+            sTiledFile.vecPosX                 = vecPosXFinal;
+            sTiledFile.vecPosY                 = vecPosYFinal;
+            sTiledFile.vecPosZ                 = vecPosZFinal;
+            sTiledFile.vecDiameter             = vecDiameterFinal;
+            sTiledFile.scalBoxWidthX           = scalBoxWidthXTiled;
+            sTiledFile.scalBoxHeightY          = scalBoxHeightYFinal;
+            sTiledFile.scalBoxDepthZ           = scalBoxDepthZFinal;
+            sTiledFile.K                       = scalSpringConstant;
+            sTiledFile.P_target                = scalPressureTarget;
+            sTiledFile.scalPressure            = scalPressure;
+            sTiledFile.N                       = scalNTiled;
+            sTiledFile.N_original              = scalNTiled;   % full (pre-cleanRats) tiled state
+            sTiledFile.scalPackingFraction     = scalPackingFractionTiled;
+            sTiledFile.scalPackingFractionFull = scalPackingFractionFullTiled;
+            sTiledFile.scalMeanCoordNum        = scalMeanCoordNumTiled;
+            sTiledFile.boolFrictionOn          = boolFrictionOn;
+            sTiledFile.scalMu                  = scalMu;
+            sTiledFile.scalKt                  = scalKt;
+            sTiledFile.x_mult                  = scalXMult;
+            sTiledFile.y_mult                  = scalYMult;
+            sTiledFile.z_mult                  = scalZMult;
+            sTiledFile.vecPosXFinal            = vecPosXFinal;
+            sTiledFile.vecPosYFinal            = vecPosYFinal;
+            sTiledFile.vecPosZFinal            = vecPosZFinal;
+            sTiledFile.vecDiameterFinal        = vecDiameterFinal;
+            sTiledFile.scalBoxWidthXTiled      = scalBoxWidthXTiled;
+            sTiledFile.scalBoxHeightYFinal     = scalBoxHeightYFinal;
+            sTiledFile.scalBoxDepthZFinal      = scalBoxDepthZFinal;
+            sTiledFile.scalNTiled              = scalNTiled;
+            sTiledFile.NTileSrc                = scalNumParticlesTileSrc;
+            sTiledFile.scalPackingFractionTiled     = scalPackingFractionTiled;
+            sTiledFile.scalPackingFractionFullTiled = scalPackingFractionFullTiled;
+            sTiledFile.scalMeanCoordNumTiled        = scalMeanCoordNumTiled;
+            cellTiledFields = fieldnames(sTiledFile);
+            save(strTiledFilename, '-struct', 'sTiledFile', cellTiledFields{:});
             fprintf('3D tiled packing saved to: %s\n', strTiledFilename);
         end
     else
         % 2D path: unchanged — reuse the existing packRepeatTile on the
         % backbone (its documented behavior).
-        if x_mult ~= 1 || y_mult ~= 1
-            packRepeatTile(N_original, K, P_target, scalRoundedWidth, seed, x_mult, y_mult, ...
-                calc_eig, save_path, save_path);
+        if scalXMult ~= 1 || scalYMult ~= 1
+            packRepeatTile(scalNumParticlesOriginal, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
+                boolCalcEig, strSavePath, strSavePath);
             disp("Tile saved to: " + strFilename);
         end
     end
@@ -1614,7 +1645,7 @@ function pack(N, K, D, G, M, P_target, seed, plotit, x_mult, y_mult, z_mult, cal
 end
 
 function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...
-        rebuildCellList(vecPosX, vecPosY, scalBoxWidthX, scalBoxHeightY, scalRawCellWidth, scalTimestep, N)
+        rebuildCellList(vecPosX, vecPosY, scalBoxWidthX, scalBoxHeightY, scalRawCellWidth, scalTimestep, scalNumParticles)
 
     scalNumCellsX  = round(scalBoxWidthX  / scalRawCellWidth);
     scalCellWidthX = scalBoxWidthX  / scalNumCellsX;
@@ -1642,7 +1673,7 @@ function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ..
 
     % O(N) bucketing via accumarray
     vecCellLinearIdx = vecCellIdxX + scalNumCellsX * (vecCellIdxY - 1);        % [N x 1]
-    cellParticleList = accumarray(vecCellLinearIdx, (1:N)', [scalNumCellsX*scalNumCellsY 1], @(x){x});
+    cellParticleList = accumarray(vecCellLinearIdx, (1:scalNumParticles)', [scalNumCellsX*scalNumCellsY 1], @(vecCellMembers){vecCellMembers});
     cellParticleList = reshape(cellParticleList, scalNumCellsX, scalNumCellsY); % [scalNumCellsX x scalNumCellsY]
 
 end
@@ -1692,11 +1723,11 @@ function [vecPairIdxSource, vecPairIdxDest, scalNumPairs, scalMaxPairs] = findNe
     end
 end
 
-function fricState = buildFricState( ...
+function sFricState = buildFricState( ...
         vecPosX, vecPosY, vecDiameter, ...
         scalBoxWidthX, scalBoxHeightY, ...
-        matDispTan, K, Kt, mu, ...
-        gammaNormal, gammaTang, M)
+        matDispTan, scalSpringConstant, scalKt, scalMu, ...
+        scalGammaNormal, scalGammaTangential, scalMass)
 % buildFricState -- Rebuild the final contact graph at ORIGINAL
 % particle indices (before cleanRats) and export a fricState struct.
 %
@@ -1713,63 +1744,63 @@ function fricState = buildFricState( ...
 %   boxLx / boxLy
 %   matDispTan  [N x N]  tangential spring displacement history
 
-    N           = size(vecPosX, 1);
-    vecRadius       = vecDiameter / 2;
-    vecInertia      = 0.5 * M .* (vecRadius .^ 2);
+    scalNumParticles = size(vecPosX, 1);
+    vecRadius        = vecDiameter / 2;
+    vecInertia       = 0.5 * scalMass .* (vecRadius .^ 2);
 
-    fricState = struct();
-    fricState.vecContactNN = zeros(0,1);
-    fricState.vecContactMM = zeros(0,1);
-    fricState.vecOverlap     = zeros(0,1);
-    fricState.vecFn          = zeros(0,1);
-    fricState.vecFt          = zeros(0,1);
-    fricState.vecUnitTanX    = zeros(0,1);
-    fricState.vecUnitTanY    = zeros(0,1);
+    sFricState = struct();
+    sFricState.vecContactNN = zeros(0,1);
+    sFricState.vecContactMM = zeros(0,1);
+    sFricState.vecOverlap     = zeros(0,1);
+    sFricState.vecFn          = zeros(0,1);
+    sFricState.vecFt          = zeros(0,1);
+    sFricState.vecUnitTanX    = zeros(0,1);
+    sFricState.vecUnitTanY    = zeros(0,1);
 
-    for ii = 1:(N-1)
-        for jj = ii+1:N
-            dx = vecPosX(jj) - vecPosX(ii);
-            dy = vecPosY(jj) - vecPosY(ii);
-            dx = dx - scalBoxWidthX * round(dx / scalBoxWidthX);
-            dy = dy - scalBoxHeightY * round(dy / scalBoxHeightY);
-            dist = sqrt(dx^2 + dy^2);
-            if dist < 1e-12, continue; end
+    for idxNN = 1:(scalNumParticles-1)
+        for idxMM = idxNN+1:scalNumParticles
+            scalSepX = vecPosX(idxMM) - vecPosX(idxNN);
+            scalSepY = vecPosY(idxMM) - vecPosY(idxNN);
+            scalSepX = scalSepX - scalBoxWidthX * round(scalSepX / scalBoxWidthX);
+            scalSepY = scalSepY - scalBoxHeightY * round(scalSepY / scalBoxHeightY);
+            scalSepDist = sqrt(scalSepX^2 + scalSepY^2);
+            if scalSepDist < 1e-12, continue; end
             % Contact distance is the SUM OF RADII = (d_i + d_j)/2, NOT the sum
-            % of diameters. (vecDiameter(ii)+vecDiameter(jj)) would double-count
+            % of diameters. (vecDiameter(idxNN)+vecDiameter(idxMM)) would double-count
             % and report ~2x overlaps, so buildFricState's forces/overlaps are
             % only correct if this is (r_i + r_j).
-            D_ij   = (vecDiameter(ii) + vecDiameter(jj)) / 2;   % = r_i + r_j
-            delta  = D_ij - dist;
-            if delta <= 0, continue; end
-            nx = dx / dist;
-            ny = dy / dist;
-            tx =  ny;
-            ty = -nx;
-            Fn      = -K * delta;
-            DispTan = matDispTan(ii + N * (jj - 1));   % [1 x 1] pair tangential displacement
-            Ft      = -Kt * DispTan;
-            fricState.vecContactNN = [fricState.vecContactNN; ii];
-            fricState.vecContactMM = [fricState.vecContactMM; jj];
-            fricState.vecOverlap     = [fricState.vecOverlap;     delta];
-            fricState.vecFn          = [fricState.vecFn;          Fn];
-            fricState.vecFt          = [fricState.vecFt;          Ft];
-            fricState.vecUnitTanX    = [fricState.vecUnitTanX;    tx];
-            fricState.vecUnitTanY    = [fricState.vecUnitTanY;    ty];
+            scalContactDist = (vecDiameter(idxNN) + vecDiameter(idxMM)) / 2;   % = r_i + r_j
+            scalOverlap     = scalContactDist - scalSepDist;
+            if scalOverlap <= 0, continue; end
+            scalNormalX  = scalSepX / scalSepDist;
+            scalNormalY  = scalSepY / scalSepDist;
+            scalUnitTanX =  scalNormalY;
+            scalUnitTanY = -scalNormalX;
+            scalFn       = -scalSpringConstant * scalOverlap;
+            scalDispTan  = matDispTan(idxNN + scalNumParticles * (idxMM - 1));   % [1 x 1] pair tangential displacement
+            scalFt       = -scalKt * scalDispTan;
+            sFricState.vecContactNN = [sFricState.vecContactNN; idxNN];
+            sFricState.vecContactMM = [sFricState.vecContactMM; idxMM];
+            sFricState.vecOverlap     = [sFricState.vecOverlap;     scalOverlap];
+            sFricState.vecFn          = [sFricState.vecFn;          scalFn];
+            sFricState.vecFt          = [sFricState.vecFt;          scalFt];
+            sFricState.vecUnitTanX    = [sFricState.vecUnitTanX;    scalUnitTanX];
+            sFricState.vecUnitTanY    = [sFricState.vecUnitTanY;    scalUnitTanY];
         end
     end
 
-    fricState.K       = K;
-    fricState.Kt      = Kt;
-    fricState.mu      = mu;
-    fricState.gammaNormal = gammaNormal;
-    fricState.gammaTang   = gammaTang;
-    fricState.M       = M;
-    fricState.vecRadius = vecRadius;
-    fricState.vecInertia = vecInertia;
-    fricState.N     = N;
-    fricState.boxLx = scalBoxWidthX;
-    fricState.boxLy = scalBoxHeightY;
-    fricState.matDispTan = matDispTan;
+    sFricState.K           = scalSpringConstant;
+    sFricState.Kt          = scalKt;
+    sFricState.mu          = scalMu;
+    sFricState.gammaNormal = scalGammaNormal;
+    sFricState.gammaTang   = scalGammaTangential;
+    sFricState.M           = scalMass;
+    sFricState.vecRadius = vecRadius;
+    sFricState.vecInertia = vecInertia;
+    sFricState.N     = scalNumParticles;
+    sFricState.boxLx = scalBoxWidthX;
+    sFricState.boxLy = scalBoxHeightY;
+    sFricState.matDispTan = matDispTan;
 end
 
 function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFrameSize, ...
@@ -1791,12 +1822,12 @@ function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFra
 
         % Periodic images: keep every copy whose disk overlaps the box
         vecX = []; vecY = []; vecR = []; vecT = []; vecL = false(0, 1);
-        for ox = [-1 0 1] * scalBoxWidthX
-            for oy = [-1 0 1] * scalBoxHeightY
-                boolIn = (vecPosX + ox + vecRadius > 0) & (vecPosX + ox - vecRadius < scalBoxWidthX) & ...
-                         (vecPosY + oy + vecRadius > 0) & (vecPosY + oy - vecRadius < scalBoxHeightY);
-                vecX = [vecX; vecPosX(boolIn) + ox];   %#ok<AGROW>
-                vecY = [vecY; vecPosY(boolIn) + oy];   %#ok<AGROW>
+        for scalOffsetX = [-1 0 1] * scalBoxWidthX
+            for scalOffsetY = [-1 0 1] * scalBoxHeightY
+                boolIn = (vecPosX + scalOffsetX + vecRadius > 0) & (vecPosX + scalOffsetX - vecRadius < scalBoxWidthX) & ...
+                         (vecPosY + scalOffsetY + vecRadius > 0) & (vecPosY + scalOffsetY - vecRadius < scalBoxHeightY);
+                vecX = [vecX; vecPosX(boolIn) + scalOffsetX];   %#ok<AGROW>
+                vecY = [vecY; vecPosY(boolIn) + scalOffsetY];   %#ok<AGROW>
                 vecR = [vecR; vecRadius(boolIn)];      %#ok<AGROW>
                 vecT = [vecT; vecTheta(boolIn)];       %#ok<AGROW>
                 vecL = [vecL; boolLarge(boolIn)];      %#ok<AGROW>
@@ -1828,8 +1859,8 @@ function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFra
         axis(hAx, 'equal');
         axis(hAx, [0 scalBoxWidthX 0 scalBoxHeightY]);
         box(hAx, 'on');
-        ht = title(hAx, cellTitle, 'Interpreter', 'latex');
-        set(ht, 'Color', [0 0 0], 'FontWeight', 'bold', 'FontSize', 14);
+        hTitle = title(hAx, cellTitle, 'Interpreter', 'latex');
+        set(hTitle, 'Color', [0 0 0], 'FontWeight', 'bold', 'FontSize', 14);
         drawnow;
         drawnow;
 
@@ -1853,23 +1884,23 @@ function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFra
             imwrite(imgIndexed, matColorMap, strGifFilename, 'gif', ...
                 'WriteMode', 'append', 'DelayTime', scalDelay);
         end
-    catch ME
+    catch sGifFrameME
         warning('pack:GIFExportFailed', ...
-            'Could not write frictional compression GIF frame (recording stopped): %s', ME.message);
+            'Could not write frictional compression GIF frame (recording stopped): %s', sGifFrameME.message);
         boolOk = false;
     end
 end
 
-function cellTitle = fricGifTitle(strLabel, nt, scalPressure, P_target, vecDiameter, ...
+function cellTitle = fricGifTitle(strLabel, idxStep, scalPressure, scalPressureTarget, vecDiameter, ...
         scalBoxWidthX, scalBoxHeightY, scalMeanCoordNum, scalMu)
 
     scalPhi = sum(pi * vecDiameter.^2 / 4) / (scalBoxWidthX * scalBoxHeightY);
 
     cellTitle = { ...
         sprintf('%s ($\\mu = %.2f$), step %d', ...
-                strLabel, scalMu, nt), ...
+                strLabel, scalMu, idxStep), ...
         sprintf('$P/P_{\\mathrm{target}} = %.3f \\quad \\phi = %.4f \\quad Z = %.2f$', ...
-                scalPressure / P_target, scalPhi, scalMeanCoordNum) ...
+                scalPressure / scalPressureTarget, scalPhi, scalMeanCoordNum) ...
     };
 end
 
