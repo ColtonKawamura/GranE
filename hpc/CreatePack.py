@@ -29,9 +29,9 @@ def main():
     M_values        = [1]       # Mass of particles
     P_target_values = [.0001, .0003, .001, .003, .01, .03, .1]
     seed_values     = [1,2]
-    x_mult_values   = [1]
+    x_mult_values   = [320]
     y_mult_values   = [1]
-    z_mult_values   = [320]
+    z_mult_values   = [1]
     plotit          = False
     calc_eig        = False
     save_path       = "./data/packings/3d/hooke/"

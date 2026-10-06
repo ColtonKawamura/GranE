@@ -43,12 +43,12 @@ def main():
     #   scalZMult ~= 0 -> 3D packing (tiles x/y/z; needs the _Full source file)
     N_values         = [1000]
     K_values         = [100]
-    P_target_values  = [0.03]
+    P_target_values = [.0001, .0003, .001, .003, .01, .03, .1]
     scalWidth_values = [10]     # 3D: round(N^(1/3)); 2D: round(sqrt(N))
-    seed_values      = [1]
+    seed_values      = [1,2]
 
     # Repeat multipliers (how many times each tile is copied along each axis).
-    scalXMult_values = [1]
+    scalXMult_values = [320]
     scalYMult_values = [1]
     scalZMult_values = [1]      # 0 -> 2D, >=1 -> 3D
 
