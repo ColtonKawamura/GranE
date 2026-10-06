@@ -1,0 +1,1 @@
+matlab -nodisplay -nosplash -r "addpath('./src/'); try; packRepeatTile(1000, 100, 0.03, 10, 1, 1, 1, false, './data/packings/3d/hooke/', './data/packings/3d/hooke/', 1, false); catch e; disp(e.message); end; exit"
