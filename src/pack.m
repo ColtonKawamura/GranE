@@ -1090,7 +1090,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     %% Snapshot the FULL jammed state (all N particles, rattlers included)
     %    BEFORE cleanRats, for tile-based repetition (see the tiling block at
     %    the end of this file). The per-step box rescalings already wrap
-    %    positions into [0, L), so every coordinate is in-box; the 3D tiler
+    %    positions into [0, L), so every coordinate is in-box; packRepeatTile
     %    reproduces this state exactly across tile boundaries. Gated on
     %    sOptions.saveFullState so default callers keep byte-identical output.
     if boolSaveFullState
@@ -1119,17 +1119,6 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         sFullStateFile.scalRoundedWidth = scalRoundedWidth;
         cellFullStateFields = fieldnames(sFullStateFile);
         save(strFullFilename, '-struct', 'sFullStateFile', cellFullStateFields{:});
-        % Keep an in-memory copy for the 3D repeat-tile block at the end of
-        % this file: after cleanRats the local position/diameter variables are
-        % rebound to the BACKBONE, so the full (rattler-inclusive) state must
-        % be captured here, before cleanRats runs.
-        vecTileSrcX = vecPosX;
-        vecTileSrcY = vecPosY;
-        vecTileSrcD = vecDiameter;
-        scalNumParticlesTileSrc = scalNumParticles;   % full per-tile particle count (rattlers included)
-        if boolThreeD
-            vecTileSrcZ = vecPosZ;
-        end
         fprintf('Full-state tile saved to: %s\n', strFullFilename);
     end
 
@@ -1531,10 +1520,14 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     fprintf('File saved to: %s\n', strFilename);
 
     %% Repeat-tile the packing in x, y, and/or z for superlattice packings.
-    %   The tile SOURCE is the FULL jammed state captured before cleanRats
-    %   (rattlers included), NOT the backbone saved to strFilename: the
-    %   user-visible superlattice repeats the exact simulated state, and
-    %   rattler positions must line up across the periodic boundary.
+    %   Both 2D and 3D use packRepeatTile (single tiling function).
+    %   3D: the tile SOURCE is the FULL jammed state saved before cleanRats
+    %   (strFullFilename, rattlers included), NOT the backbone saved to
+    %   strFilename: the user-visible superlattice repeats the exact
+    %   simulated state, and rattler positions must line up across the
+    %   periodic boundary. The tiled file is saved under the normal packing
+    %   name 3D_N<Ntiled>_P<P>_Width<W>_Seed<s>[_Hertz].mat.
+    %   2D: unchanged — tiles the backbone (its documented behavior).
     if boolThreeD
         if scalXMult ~= 1 || scalYMult ~= 1 || scalZMult ~= 1
             if ~boolSaveFullState
@@ -1542,98 +1535,10 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
                     ['3D repeat-tile requires the full (pre-cleanRats) state. ', ...
                      'Call pack(..., options) with options.saveFullState = true.']);
             end
-            [vecPosXFinal, vecPosYFinal, vecPosZFinal, vecDiameterFinal, ...
-                scalBoxWidthXTiled, scalBoxHeightYFinal, scalBoxDepthZFinal, ...
-                scalNTiled] = tile3D( ...
-                vecTileSrcX, vecTileSrcY, vecTileSrcZ, vecTileSrcD, ...
-                scalBoxWidthX, scalBoxHeightY, scalBoxDepthZ, ...
-                scalXMult, scalYMult, scalZMult, scalNumParticlesTileSrc);
-
-            % Metrics on the tiled packing (rattlers included, matching the
-            % stored particles). Packing fraction is identical to the base
-            % tile by construction; coordination number under full PBC equals
-            % the base tile's full-state Zn (tiling replicates the contact
-            % network).
-            scalPackingFractionTiled  = computePackingFraction(vecDiameterFinal, scalBoxWidthXTiled, scalBoxHeightYFinal, scalBoxDepthZFinal);
-            scalPackingFractionFullTiled = scalPackingFractionTiled;
-            % NOTE: the direct recompute on the tiled packing is ONLY for small
-            % packings used by the unit tests (tests/testPack/testPack.m).
-            % computeMeanCoordNum is O(N^2) in memory (N x N ndgrid), so for
-            % production-sized tilings (N > 1200; e.g. 1000 x 160 = 160000
-            % particles needs ~400 GB) it is skipped and the base tile's
-            % full-state Zn is used instead — exact under full PBC.
-            scalMaxNumForDirectCoordNum = 1200;
-            if scalNTiled <= scalMaxNumForDirectCoordNum
-                scalMeanCoordNumTiled = computeMeanCoordNum(vecPosXFinal, vecPosYFinal, vecDiameterFinal, ...
-                    scalBoxWidthXTiled, scalBoxHeightYFinal, vecPosZFinal, scalBoxDepthZFinal);
-            else
-                scalMeanCoordNumTiled = computeMeanCoordNum(vecTileSrcX, vecTileSrcY, vecTileSrcD, ...
-                    scalBoxWidthX, scalBoxHeightY, vecTileSrcZ, scalBoxDepthZ);
-            end
-            fprintf('3D tiled packing: N=%d (of %d per tile), PF=%.4f, mean coordination number=%.4f\n', ...
-                scalNTiled, scalNumParticlesTileSrc, scalPackingFractionTiled, scalMeanCoordNumTiled);
-
-            % Tiled output filename: the normal packing name,
-            % 3D_N%d_P%s_Width%d_Seed%d[_Hertz].mat, with N = the TILED particle
-            % count, so simMD finds it like any other packing. Width and Seed
-            % are the base tile's; the multipliers are stored inside the file
-            % (x_mult, y_mult, z_mult). N differs from the base tile's, so this
-            % never overwrites the backbone file.
-            if boolHertzian
-                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
-                    strSavePath, scalNTiled, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-            else
-                strTiledFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-                    strSavePath, scalNTiled, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-            end
-
-            % Save the TILED (superlattice) packing — the full pre-cleanRats
-            % state repeated across the tile grid — not the backbone. The
-            % stored variable names match the backbone .mat convention
-            % (vecPosX, N, scalPackingFraction, ...) so downstream loaders are
-            % unchanged; save -struct writes one variable per field, in the
-            % order of the explicit field list.
-            sTiledFile = struct();
-            sTiledFile.vecPosX                 = vecPosXFinal;
-            sTiledFile.vecPosY                 = vecPosYFinal;
-            sTiledFile.vecPosZ                 = vecPosZFinal;
-            sTiledFile.vecDiameter             = vecDiameterFinal;
-            sTiledFile.scalBoxWidthX           = scalBoxWidthXTiled;
-            sTiledFile.scalBoxHeightY          = scalBoxHeightYFinal;
-            sTiledFile.scalBoxDepthZ           = scalBoxDepthZFinal;
-            sTiledFile.K                       = scalSpringConstant;
-            sTiledFile.P_target                = scalPressureTarget;
-            sTiledFile.scalPressure            = scalPressure;
-            sTiledFile.N                       = scalNTiled;
-            sTiledFile.N_original              = scalNTiled;   % full (pre-cleanRats) tiled state
-            sTiledFile.scalPackingFraction     = scalPackingFractionTiled;
-            sTiledFile.scalPackingFractionFull = scalPackingFractionFullTiled;
-            sTiledFile.scalMeanCoordNum        = scalMeanCoordNumTiled;
-            sTiledFile.boolFrictionOn          = boolFrictionOn;
-            sTiledFile.scalMu                  = scalMu;
-            sTiledFile.scalKt                  = scalKt;
-            sTiledFile.x_mult                  = scalXMult;
-            sTiledFile.y_mult                  = scalYMult;
-            sTiledFile.z_mult                  = scalZMult;
-            sTiledFile.vecPosXFinal            = vecPosXFinal;
-            sTiledFile.vecPosYFinal            = vecPosYFinal;
-            sTiledFile.vecPosZFinal            = vecPosZFinal;
-            sTiledFile.vecDiameterFinal        = vecDiameterFinal;
-            sTiledFile.scalBoxWidthXTiled      = scalBoxWidthXTiled;
-            sTiledFile.scalBoxHeightYFinal     = scalBoxHeightYFinal;
-            sTiledFile.scalBoxDepthZFinal      = scalBoxDepthZFinal;
-            sTiledFile.scalNTiled              = scalNTiled;
-            sTiledFile.NTileSrc                = scalNumParticlesTileSrc;
-            sTiledFile.scalPackingFractionTiled     = scalPackingFractionTiled;
-            sTiledFile.scalPackingFractionFullTiled = scalPackingFractionFullTiled;
-            sTiledFile.scalMeanCoordNumTiled        = scalMeanCoordNumTiled;
-            cellTiledFields = fieldnames(sTiledFile);
-            save(strTiledFilename, '-struct', 'sTiledFile', cellTiledFields{:});
-            fprintf('3D tiled packing saved to: %s\n', strTiledFilename);
+            packRepeatTile(scalNumParticles, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
+                boolCalcEig, strSavePath, strSavePath, scalZMult, boolHertzian);
         end
     else
-        % 2D path: unchanged — reuse the existing packRepeatTile on the
-        % backbone (its documented behavior).
         if scalXMult ~= 1 || scalYMult ~= 1
             packRepeatTile(scalNumParticlesOriginal, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
                 boolCalcEig, strSavePath, strSavePath);
