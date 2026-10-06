@@ -21,3 +21,6 @@ venv/
 /data/eigenData/.DS_Store
 /data/packings/3d/.DS_Store
 /junkyard
+/data/eigenData/3d/.DS_Store
+/data/eigenData/3d/hooke/.DS_Store
+/data/eigenData/3d/hooke/iso3d-uniform-mass.tar.gz
