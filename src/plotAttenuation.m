@@ -94,41 +94,39 @@ function out = plotAttenuation(varargin)
 
 	markerSizes = exp(gammaValues/max(gammaValues))*3;
 
-	% --- One point per unique (pressure, gamma) pair ---
-	usedP = unique(data.pressure_actual(:));
-	usedG = unique(data.gamma(:));
-	hLines = [];
+	% --- One curve per unique (pressure, gamma) pair.
+	% Each pair has several omega bins; connect them so the
+	% attenuation-vs-frequency sweep is visible as a line, not scattered points.
+	usedP = sort(unique(data.pressure_actual(:)));
+	usedG = sort(unique(data.gamma(:)));
 
 	for pi = 1:numel(usedP)
 		pv = usedP(pi);
 		maskP = (data.pressure_actual == pv);
-		attP = data.(attenField)(maskP);
-		wP   = data.omega(maskP);
-		gP   = data.gamma(maskP);
 		colourP = colourList(pi,:);
 
 		for gi = 1:numel(usedG)
 			gv = usedG(gi);
-			% maskP indexes the FULL arrays; build a local index vector first so
-			% we can subset attP/wP with the gamma condition locally.
-			idxAll = find(maskP);
-			subG   = data.gamma(idxAll) == gv;
-			idxLocal = find(subG);
-			if isempty(idxLocal)
+
+			% Collect indices for this (P, gamma) pair.
+			idx = find(maskP & (data.gamma == gv));
+			if isempty(idx)
 				continue;
 			end
-			markerSize = markerSizes(gi);
-			attVal = mean(attP(idxLocal));
-			wVal   = mean(wP(idxLocal));
+
+			attVals = data.(attenField)(idx);
+			wVals   = data.omega(idx);
 
 			% Guard the log plot: clamp non-positive attenuation.
-			if attVal <= 0
-				attVal = 1e-6;
-			end
+			attVals(attVals <= 0) = 1e-6;
+
+			% Sort by omega so the line connects in frequency order.
+			[wVals, sortIdx] = sort(wVals);
+			attVals = attVals(sortIdx);
 
 			if options.plotFlag
-				hLines(end+1) = plot(ax, wVal, attVal, '-o', ...
-					'MarkerSize', markerSize, ...
+				plot(ax, wVals, attVals, '-o', ...
+					'MarkerSize', markerSizes(gi), ...
 					'LineWidth', 1.2, ...
 					'Color', colourP, ...
 					'DisplayName', sprintf(' %.4f, %.4f', pv, gv));
