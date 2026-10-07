@@ -1,23 +1,59 @@
-function out = plotAttenuation(data, gammaValues, options)
-%PLOTATTENUATIONOMEGA Plot attenuation coefficient alpha vs angular frequency omega,
+function out = plotAttenuation(varargin)
+%PLOTATTENUATION Plot attenuation coefficient alpha vs angular frequency omega,
 %coloured by applied pressure. Mirrors GranMA/src/matlab_functions/
 %plotAttenuationOmega.m in both logic and aesthetics.
 %
-%   data          - scalar struct with fields: attenuation_x, omega, gamma,
-%                   pressure_actual (produced by GranE/src/processData.m)
-%   gammaValues   - set of gamma values to cycle through (marker-size axis)
-%   options.plotFlag  - logical, whether to render a figure (default true)
-%   options.lightMode - logical, white palette instead of dark-mode blend
-%   options.pressureArray - set of pressure values to plot (default: from data)
+%   Simplest call (file path):
+%       o.pressureArray = [0.001 0.01 0.1];   % optional
+%       o.lightMode   = true;                  % optional (default false)
+%       plotAttenuation('data/simMD/3d/hooke/combined_simData.mat', o);
 %
-%   Each (pressure_actual, gamma) pair in `data` is plotted as a single point,
-%   coloured on a blue->red ramp by normalized pressure and sized by gamma,
-%   exactly like the GranMA convention.
+%   Direct-struct call (GranMA style):
+%       plotAttenuation(data, gammaValues, o);
+%
+%   data        - scalar struct (fields: attenuation_x, omega, gamma,
+%                 pressure_actual) produced by processData.m
+%   gammaValues - set of gamma values for marker sizes (default: from data)
+%   options.plotFlag    - render a figure (default true)
+%   options.lightMode   - white palette (default false)
+%   options.pressureArray - pressures to plot (default: from data)
 
-	% Defaults (plain struct access, robust to positional calls)
+	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
+	nArgs = numel(varargin);
+	if nArgs == 1
+		if ischar(varargin{1}) || isstring(varargin{1})
+			data = load(varargin{1});
+		else
+			data = varargin{1};
+		end
+		gammaValues = [];
+		options = struct();
+	elseif nArgs == 2
+		if ischar(varargin{1}) || isstring(varargin{1})
+			data = load(varargin{1});
+			options = varargin{2};
+			gammaValues = [];
+		else
+			data = varargin{1};
+			gammaValues = varargin{2};
+			options = struct();
+		end
+	elseif nArgs == 3
+		data = varargin{1};
+		gammaValues = varargin{2};
+		options = varargin{3};
+	else
+		error('plotAttenuation:wrongNumArgs', 'Expected 1-3 arguments.');
+	end
+
 	if ~isfield(options,'plotFlag'), options.plotFlag = true; end
 	if ~isfield(options,'lightMode'), options.lightMode = false; end
 	if ~isfield(options,'pressureArray'), options.pressureArray = []; end
+
+	% If no gamma list passed, derive from the data
+	if isempty(gammaValues)
+		gammaValues = sort(unique(data.gamma(:)));
+	end
 
 	attenField   = 'attenuation_x';
 	attenR2Field = 'attenuation_r_squared_x';
