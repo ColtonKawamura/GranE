@@ -135,11 +135,10 @@ function out = plotAttenuation(varargin)
 	end
 
 	if options.plotFlag
-		leg = legend(ax, 'show', 'Location', 'northeast', 'Interpreter', 'latex', 'FontSize', 15);
+		leg = legend(ax, 'show', 'Location', 'eastoutside', 'Interpreter', 'latex', 'FontSize', 15);
 		leg.Location = 'eastoutside';
 		title(leg, '$  \hat{P}, \hat{\gamma} $');
 		axis square;
-		legend(ax,'Location','northeast','Interpreter','latex','FontSize',15);
 		grid(ax, 'on');
 		box(ax, 'on');
 		if options.lightMode
