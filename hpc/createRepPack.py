@@ -48,7 +48,7 @@ def main():
     seed_values      = [1,2]
 
     # Repeat multipliers (how many times each tile is copied along each axis).
-    scalXMult_values = [320]
+    scalXMult_values = [640]
     scalYMult_values = [1]
     scalZMult_values = [1]      # 0 -> 2D, >=1 -> 3D
 
