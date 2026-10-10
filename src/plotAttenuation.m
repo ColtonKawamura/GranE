@@ -23,6 +23,10 @@ function plotAttenuation(varargin)
 %   options.scaleXCoordNum - exponent q: plot omega / Z^q on the x-axis, where
 %                           Z is the packing's mean coordination number
 %                           (data.coord_num from processData; default 0).
+%   options.scaleXOmegaC  - exponent r: plot omega / omega_c^r on the x-axis,
+%                           with omega_c = sqrt(pressure_actual) per curve
+%                           (default 0; r = 1 is GranMA's xOmegaOverSqrtP).
+%                           Combines with scaleXCoordNum: x = omega/(omega_c^r Z^q).
 
 	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
 	nArgs = numel(varargin);
@@ -61,8 +65,10 @@ function plotAttenuation(varargin)
 	if ~isfield(options,'pressureArray'), options.pressureArray = []; end
 	if ~isfield(options,'scaleYGamma'), options.scaleYGamma = 0; end
 	if ~isfield(options,'scaleXCoordNum'), options.scaleXCoordNum = 0; end
+	if ~isfield(options,'scaleXOmegaC'), options.scaleXOmegaC = 0; end
 	validateattributes(options.scaleYGamma, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXCoordNum, {'numeric'}, {'scalar', 'real', 'finite'});
+	validateattributes(options.scaleXOmegaC, {'numeric'}, {'scalar', 'real', 'finite'});
 
 	if options.scaleXCoordNum ~= 0
 		if ~isfield(data, 'coord_num') || all(isnan(data.coord_num(:)))
@@ -97,9 +103,10 @@ function plotAttenuation(varargin)
 		ax = axes('Parent', figure_attenuation);
 		hold(ax, 'on');
 
-		ylabel(ax, scaledLabel('\hat{\alpha}', '\hat{\gamma}', options.scaleYGamma), ...
+		ylabel(ax, scaledLabel('\hat{\alpha}', {'\hat{\gamma}'}, options.scaleYGamma), ...
 			'FontSize', 20, 'Interpreter', 'latex');
-		xlabel(ax, scaledLabel('\hat{\omega}', 'Z', options.scaleXCoordNum), ...
+		xlabel(ax, scaledLabel('\hat{\omega}', {'\hat{\omega}_c', 'Z'}, ...
+			[options.scaleXOmegaC, options.scaleXCoordNum]), ...
 			'FontSize', 20, 'Interpreter', 'latex');
 		set(ax, 'XScale', 'log');
 		set(ax, 'YScale', 'log');
@@ -142,6 +149,7 @@ function plotAttenuation(varargin)
 				continue;
 			end
 			gammaValueActual = data.gamma(idx(1));
+			omegaC = sqrt(data.pressure_actual(idx(1)));   % omega_c = sqrt(P_actual)
 
 			attVals = data.(attenField)(idx);
 			wVals   = data.omega(idx);
@@ -167,9 +175,9 @@ function plotAttenuation(varargin)
 			attVals = attVals(sortIdx);
 			zVals   = zVals(sortIdx);
 
-			% Axis scaling: y = alpha / gamma^p, x = omega / Z^q.
+			% Axis scaling: y = alpha / gamma^p, x = omega / (omega_c^r Z^q).
 			plotY = attVals ./ gammaValueActual.^options.scaleYGamma;
-			plotX = wVals ./ zVals.^options.scaleXCoordNum;
+			plotX = wVals ./ (omegaC.^options.scaleXOmegaC .* zVals.^options.scaleXCoordNum);
 
 			if options.plotFlag
 				plot(ax, plotX, plotY, '-o', ...
@@ -197,14 +205,26 @@ function plotAttenuation(varargin)
 	end
 end
 
-function str = scaledLabel(base, scaleSym, p)
-	% LaTeX axis label for base / scaleSym^p, e.g. '$\frac{\hat{\alpha}}{\hat{\gamma}^{\frac{1}{2}}}$'.
-	if p == 0
-		str = ['$' base '$'];
-	elseif p > 0
-		str = ['$\frac{' base '}{' powerTerm(scaleSym, p) '}$'];
+function str = scaledLabel(base, syms, powers)
+	% LaTeX label for base / prod(syms{k}^powers(k)), e.g.
+	% '$\frac{\hat{\alpha}}{\hat{\gamma}^{\frac{1}{2}}}$'. Positive powers go in
+	% the denominator, negative powers multiply the numerator.
+	num = base;
+	den = '';
+	for k = 1:numel(syms)
+		if powers(k) > 0
+			if ~isempty(den)
+				den = [den '\,'];
+			end
+			den = [den powerTerm(syms{k}, powers(k))];
+		elseif powers(k) < 0
+			num = [num '\,' powerTerm(syms{k}, -powers(k))];
+		end
+	end
+	if isempty(den)
+		str = ['$' num '$'];
 	else
-		str = ['$' base '\,' powerTerm(scaleSym, -p) '$'];
+		str = ['$\frac{' num '}{' den '}$'];
 	end
 end
 
