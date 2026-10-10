@@ -27,6 +27,9 @@ function plotAttenuation(varargin)
 %                           with omega_c = sqrt(pressure_actual) per curve
 %                           (default 0; r = 1 is GranMA's xOmegaOverSqrtP).
 %                           Combines with scaleXCoordNum: x = omega/(omega_c^r Z^q).
+%   options.seed          - plot only this packing seed (default [] = all seeds).
+%                           Must match a seed in data.seed exactly; the figure
+%                           is titled "Seed = <seed>" (GranMA singleSeed style).
 
 	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
 	nArgs = numel(varargin);
@@ -66,9 +69,22 @@ function plotAttenuation(varargin)
 	if ~isfield(options,'scaleYGamma'), options.scaleYGamma = 0; end
 	if ~isfield(options,'scaleXCoordNum'), options.scaleXCoordNum = 0; end
 	if ~isfield(options,'scaleXOmegaC'), options.scaleXOmegaC = 0; end
+	if ~isfield(options,'seed'), options.seed = []; end
 	validateattributes(options.scaleYGamma, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXCoordNum, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXOmegaC, {'numeric'}, {'scalar', 'real', 'finite'});
+
+	% --- Seed selection (before any other filtering) ---
+	if ~isempty(options.seed)
+		validateattributes(options.seed, {'numeric'}, {'scalar', 'real', 'finite'});
+		% filterData picks the closest value, so check for an exact match
+		% first to avoid silently plotting a different seed.
+		if ~any(data.seed(:) == options.seed)
+			error('plotAttenuation:noSeed', 'Seed %g not found. Available seeds: %s', ...
+				options.seed, mat2str(unique(data.seed(:))'));
+		end
+		data = filterData(data, 'seed', options.seed);
+	end
 
 	if options.scaleXCoordNum ~= 0
 		if ~isfield(data, 'coord_num') || all(isnan(data.coord_num(:)))
@@ -191,6 +207,9 @@ function plotAttenuation(varargin)
 	end
 
 	if options.plotFlag
+		if ~isempty(options.seed)
+			title(ax, sprintf('Seed = %g', options.seed), 'Interpreter', 'latex', 'FontSize', 20);
+		end
 		leg = legend(ax, 'show', 'Location', 'eastoutside', 'Interpreter', 'latex', 'FontSize', 15);
 		leg.Location = 'eastoutside';
 		title(leg, '$  \hat{P}, \hat{\gamma} $');
