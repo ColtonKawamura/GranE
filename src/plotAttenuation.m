@@ -15,18 +15,24 @@ function plotAttenuation(varargin)
 %                 pressure) produced by processData.m
 %   gammaValues - gamma values to plot; also sets marker sizes (default: from data)
 %   options.plotFlag    - render a figure (default true)
-%   options.lightMode   - lighter palette + light theme (default false)
+%   options.lightMode   - lighter palette + light theme (default false: the
+%                         figure follows the system/MATLAB default theme)
 %   options.pressureArray - pressures to plot (default: from data)
-%   options.scaleYGamma   - exponent p: plot alpha / gamma^p on the y-axis
-%                           (default 0 = unscaled). Any real p, e.g. 0.5, 1.4;
-%                           negative p multiplies. GranMA convention (divide).
-%   options.scaleXCoordNum - exponent q: plot omega / Z^q on the x-axis, where
-%                           Z is the packing's mean coordination number
-%                           (data.coord_num from processData; default 0).
-%   options.scaleXOmegaC  - exponent r: plot omega / omega_c^r on the x-axis,
-%                           with omega_c = sqrt(pressure_actual) per curve
-%                           (default 0; r = 1 is GranMA's xOmegaOverSqrtP).
-%                           Combines with scaleXCoordNum: x = omega/(omega_c^r Z^q).
+%
+%   Axis scaling. Each option is the literal exponent applied to that
+%   quantity (default 0 = not used); any real value, e.g. -1, -1/4, 0.5, 1.4.
+%   All options on an axis combine multiplicatively:
+%       y = alpha * gamma^scaleYGamma * P_actual^scaleYPressure
+%       x = omega * omega_c^scaleXOmegaC * Z^scaleXCoordNum
+%   e.g. scaleYGamma = -1, scaleYPressure = -1/4 plots alpha / (gamma P^(1/4)).
+%   Axis labels follow: negative exponents go in the denominator and simple
+%   fractions are written as \frac{n}{d}.
+%   options.scaleYGamma    - exponent on gamma (per curve).
+%   options.scaleYPressure - exponent on pressure_actual (per curve).
+%   options.scaleXOmegaC   - exponent on omega_c = sqrt(pressure_actual)
+%                            (-1 is GranMA's xOmegaOverSqrtP).
+%   options.scaleXCoordNum - exponent on Z, the packing's mean coordination
+%                            number (data.coord_num from processData).
 %   options.seed          - plot only this packing seed (default [] = all seeds).
 %                           Must match a seed in data.seed exactly; the figure
 %                           is titled "Seed = <seed>" (GranMA singleSeed style).
@@ -67,10 +73,12 @@ function plotAttenuation(varargin)
 	if ~isfield(options,'lightMode'), options.lightMode = false; end
 	if ~isfield(options,'pressureArray'), options.pressureArray = []; end
 	if ~isfield(options,'scaleYGamma'), options.scaleYGamma = 0; end
+	if ~isfield(options,'scaleYPressure'), options.scaleYPressure = 0; end
 	if ~isfield(options,'scaleXCoordNum'), options.scaleXCoordNum = 0; end
 	if ~isfield(options,'scaleXOmegaC'), options.scaleXOmegaC = 0; end
 	if ~isfield(options,'seed'), options.seed = []; end
 	validateattributes(options.scaleYGamma, {'numeric'}, {'scalar', 'real', 'finite'});
+	validateattributes(options.scaleYPressure, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXCoordNum, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXOmegaC, {'numeric'}, {'scalar', 'real', 'finite'});
 
@@ -115,11 +123,12 @@ function plotAttenuation(varargin)
 	pressureList = sort(pressureList(:))';
 
 	if options.plotFlag
-		figure_attenuation = figure('Name','Attenuation vs Angular Frequency','Color','w');
+		figure_attenuation = figure('Name','Attenuation vs Angular Frequency');
 		ax = axes('Parent', figure_attenuation);
 		hold(ax, 'on');
 
-		ylabel(ax, scaledLabel('\hat{\alpha}', {'\hat{\gamma}'}, options.scaleYGamma), ...
+		ylabel(ax, scaledLabel('\hat{\alpha}', {'\hat{\gamma}', '\hat{P}'}, ...
+			[options.scaleYGamma, options.scaleYPressure]), ...
 			'FontSize', 20, 'Interpreter', 'latex');
 		xlabel(ax, scaledLabel('\hat{\omega}', {'\hat{\omega}_c', 'Z'}, ...
 			[options.scaleXOmegaC, options.scaleXCoordNum]), ...
@@ -157,7 +166,8 @@ function plotAttenuation(varargin)
 			continue;
 		end
 		colourP = colourList(iP,:);
-		omegaC = sqrt(pressureData.pressure_actual(1));   % omega_c = sqrt(P_actual)
+		pressureActual = pressureData.pressure_actual(1);
+		omegaC = sqrt(pressureActual);   % omega_c = sqrt(P_actual)
 
 		for gammaValue = gammaValues
 			markerSize = exp(gammaValue/max(gammaValues))*3;
@@ -192,9 +202,11 @@ function plotAttenuation(varargin)
 			attVals = attVals(sortIdx);
 			zVals   = zVals(sortIdx);
 
-			% Axis scaling: y = alpha / gamma^p, x = omega / (omega_c^r Z^q).
-			plotY = attVals ./ gammaValueActual.^options.scaleYGamma;
-			plotX = wVals ./ (omegaC.^options.scaleXOmegaC .* zVals.^options.scaleXCoordNum);
+			% Axis scaling with literal exponents:
+			%   y = alpha * gamma^a * P^b,  x = omega * omega_c^c * Z^d.
+			plotY = attVals .* gammaValueActual.^options.scaleYGamma ...
+				.* pressureActual.^options.scaleYPressure;
+			plotX = wVals .* omegaC.^options.scaleXOmegaC .* zVals.^options.scaleXCoordNum;
 
 			if options.plotFlag
 				plot(ax, plotX, plotY, '-o', ...
@@ -226,19 +238,19 @@ function plotAttenuation(varargin)
 end
 
 function str = scaledLabel(base, syms, powers)
-	% LaTeX label for base / prod(syms{k}^powers(k)), e.g.
-	% '$\frac{\hat{\alpha}}{\hat{\gamma}^{\frac{1}{2}}}$'. Positive powers go in
-	% the denominator, negative powers multiply the numerator.
+	% LaTeX label for base * prod(syms{k}^powers(k)). Positive powers multiply
+	% the numerator, negative powers go in the denominator, e.g. powers = -1/2
+	% gives '$\frac{\hat{\alpha}}{\hat{\gamma}^{\frac{1}{2}}}$'.
 	num = base;
 	den = '';
 	for k = 1:numel(syms)
 		if powers(k) > 0
+			num = [num '\,' powerTerm(syms{k}, powers(k))];
+		elseif powers(k) < 0
 			if ~isempty(den)
 				den = [den '\,'];
 			end
-			den = [den powerTerm(syms{k}, powers(k))];
-		elseif powers(k) < 0
-			num = [num '\,' powerTerm(syms{k}, -powers(k))];
+			den = [den powerTerm(syms{k}, -powers(k))];
 		end
 	end
 	if isempty(den)
