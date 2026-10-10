@@ -1,4 +1,4 @@
-% driver_processPlot.m
+% driver_processPlot.m  (run from the repo root)
 % Runs processData on the new files, then plots attenuation vs omega.
 addpath('./src');
 

@@ -1,4 +1,4 @@
-function out = plotAttenuation(varargin)
+function plotAttenuation(varargin)
 %PLOTATTENUATION Plot attenuation coefficient alpha vs angular frequency omega,
 %coloured by applied pressure. Mirrors GranMA/src/matlab_functions/
 %plotAttenuationOmega.m in both logic and aesthetics.
@@ -12,10 +12,10 @@ function out = plotAttenuation(varargin)
 %       plotAttenuation(data, gammaValues, o);
 %
 %   data        - scalar struct (fields: attenuation_x, omega, gamma,
-%                 pressure_actual) produced by processData.m
-%   gammaValues - set of gamma values for marker sizes (default: from data)
+%                 pressure) produced by processData.m
+%   gammaValues - gamma values to plot; also sets marker sizes (default: from data)
 %   options.plotFlag    - render a figure (default true)
-%   options.lightMode   - white palette (default false)
+%   options.lightMode   - lighter palette + light theme (default false)
 %   options.pressureArray - pressures to plot (default: from data)
 
 	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
@@ -31,6 +31,10 @@ function out = plotAttenuation(varargin)
 	elseif nArgs == 2
 		if ischar(varargin{1}) || isstring(varargin{1})
 			data = load(varargin{1});
+			options = varargin{2};
+			gammaValues = [];
+		elseif isstruct(varargin{2})
+			data = varargin{1};
 			options = varargin{2};
 			gammaValues = [];
 		else
@@ -52,19 +56,19 @@ function out = plotAttenuation(varargin)
 
 	% If no gamma list passed, derive from the data
 	if isempty(gammaValues)
-		gammaValues = sort(unique(data.gamma(:)));
+		gammaValues = unique(data.gamma(:));
 	end
+	gammaValues = sort(gammaValues(:))';
 
-	attenField   = 'attenuation_x';
-	attenR2Field = 'attenuation_r_squared_x';
+	attenField = 'attenuation_x';
 
-	% --- Pressure list setup ---
+	% --- Pressure list setup (GranMA filters on the input pressure) ---
 	if ~isempty(options.pressureArray)
 		pressureList = options.pressureArray;
 	else
-		pressureList = unique(data.pressure_actual(:))';
+		pressureList = unique(data.pressure(:));
 	end
-	pressureList = sort(pressureList);
+	pressureList = sort(pressureList(:))';
 
 	if options.plotFlag
 		figure_attenuation = figure('Name','Attenuation vs Angular Frequency','Color','w');
@@ -80,11 +84,15 @@ function out = plotAttenuation(varargin)
 		box(ax, 'on');
 	end
 
-	% --- Normalise pressure to a blue->red RGB ramp (normVarColor convention) ---
-	% colour = [n, 0, 1-n]; dark-mode blends toward white.
-	normPressure = (log(pressureList) - min(log(pressureList))) ./ ...
-		(max(log(pressureList)) - min(log(pressureList)));
-	normPressure(isempty(normPressure)) = 0;
+	% --- Normalise log-pressure to a blue->red RGB ramp (normVarColor convention) ---
+	% colour = [n, 0, 1-n]; lightMode blends the colours toward white.
+	logP = log(pressureList);
+	logRange = max(logP) - min(logP);
+	if logRange > 0
+		normPressure = (logP - min(logP)) ./ logRange;
+	else
+		normPressure = zeros(size(logP));   % single pressure: avoid 0/0
+	end
 	normPressure = normPressure(:);
 	colourList = [normPressure, zeros(numel(normPressure), 1), (1 - normPressure)];
 	if options.lightMode
@@ -92,33 +100,36 @@ function out = plotAttenuation(varargin)
 		colourList = min(colourList, 1);
 	end
 
-	markerSizes = exp(gammaValues/max(gammaValues))*3;
+	% --- One curve per (pressure, gamma) pair, looping over the requested
+	% lists exactly as GranMA's plotAttenuationOmega does.
+	for iP = 1:numel(pressureList)
+		pressureValue = pressureList(iP);
+		maskP = isClose(data.pressure, pressureValue);
+		if ~any(maskP)
+			continue;
+		end
+		colourP = colourList(iP,:);
 
-	% --- One curve per unique (pressure, gamma) pair.
-	% Each pair has several omega bins; connect them so the
-	% attenuation-vs-frequency sweep is visible as a line, not scattered points.
-	usedP = sort(unique(data.pressure_actual(:)));
-	usedG = sort(unique(data.gamma(:)));
+		for gammaValue = gammaValues
+			markerSize = exp(gammaValue/max(gammaValues))*3;
 
-	for pi = 1:numel(usedP)
-		pv = usedP(pi);
-		maskP = (data.pressure_actual == pv);
-		colourP = colourList(pi,:);
-
-		for gi = 1:numel(usedG)
-			gv = usedG(gi);
-
-			% Collect indices for this (P, gamma) pair.
-			idx = find(maskP & (data.gamma == gv));
+			idx = find(maskP & isClose(data.gamma, gammaValue));
 			if isempty(idx)
 				continue;
 			end
+			gammaValueActual = data.gamma(idx(1));
 
 			attVals = data.(attenField)(idx);
 			wVals   = data.omega(idx);
 
-			% Guard the log plot: clamp non-positive attenuation.
-			attVals(attVals <= 0) = 1e-6;
+			% GranMA default view: discard unphysical fits with alpha > 1.
+			% Non-positive values are left in; the log axis omits them.
+			keep = ~(attVals > 1);
+			attVals = attVals(keep);
+			wVals   = wVals(keep);
+			if isempty(wVals)
+				continue;
+			end
 
 			% Sort by omega so the line connects in frequency order.
 			[wVals, sortIdx] = sort(wVals);
@@ -126,10 +137,10 @@ function out = plotAttenuation(varargin)
 
 			if options.plotFlag
 				plot(ax, wVals, attVals, '-o', ...
-					'MarkerSize', markerSizes(gi), ...
+					'MarkerSize', markerSize, ...
 					'LineWidth', 1.2, ...
 					'Color', colourP, ...
-					'DisplayName', sprintf(' %.4f, %.4f', pv, gv));
+					'DisplayName', sprintf(' %.4f, %.4f', pressureValue, gammaValueActual));
 			end
 		end
 	end
@@ -142,7 +153,15 @@ function out = plotAttenuation(varargin)
 		grid(ax, 'on');
 		box(ax, 'on');
 		if options.lightMode
-			theme(gcf, 'light');
+			try
+				theme(gcf, 'light');   % theme() only exists in R2025a+
+			catch
+			end
 		end
 	end
+end
+
+function tf = isClose(values, target)
+	% Tolerant equality for floating-point parameter matching.
+	tf = abs(values - target) <= 1e-9 * max(1, abs(target));
 end

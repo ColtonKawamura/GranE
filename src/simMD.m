@@ -943,7 +943,8 @@ try
 
     % ── Y direction ──────────────────────────────────────────────────────
     fprintf('[simMD] DFT processing Y direction ...\n');
-    [~, index_particles]              = sort(vecPosY0);
+    % Order by x (propagation direction) so unwrap() follows the wave.
+    [~, index_particles]              = sort(vecPosX0);
     initial_distance_from_oscillation = vecPosX0;
 
     [fitted_attenuation, wavenumber, attenuation_fit_line, ...
@@ -980,7 +981,8 @@ try
     end
     if is3D
         fprintf('[simMD] DFT processing Z direction ...\n');
-        [~, index_particles]              = sort(vecPosZ0);
+        % Order by x (propagation direction) so unwrap() follows the wave.
+        [~, index_particles]              = sort(vecPosX0);
         initial_distance_from_oscillation = vecPosX0;
 
         [fitted_attenuation, wavenumber, attenuation_fit_line, ...
