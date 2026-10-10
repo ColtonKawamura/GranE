@@ -132,29 +132,30 @@ function plotAttenuation(varargin)
 	end
 
 	% --- One curve per (pressure, gamma) pair, looping over the requested
-	% lists exactly as GranMA's plotAttenuationOmega does.
+	% lists and selecting simulations with filterData exactly as GranMA's
+	% plotAttenuationOmega does (closest-value match on each field).
 	for iP = 1:numel(pressureList)
 		pressureValue = pressureList(iP);
-		maskP = isClose(data.pressure, pressureValue);
-		if ~any(maskP)
+		pressureData = filterData(data, 'pressure', pressureValue);
+		if isempty(pressureData.omega)
 			continue;
 		end
 		colourP = colourList(iP,:);
+		omegaC = sqrt(pressureData.pressure_actual(1));   % omega_c = sqrt(P_actual)
 
 		for gammaValue = gammaValues
 			markerSize = exp(gammaValue/max(gammaValues))*3;
 
-			idx = find(maskP & isClose(data.gamma, gammaValue));
-			if isempty(idx)
+			gammaData = filterData(pressureData, 'gamma', gammaValue);
+			if isempty(gammaData.omega)
 				continue;
 			end
-			gammaValueActual = data.gamma(idx(1));
-			omegaC = sqrt(data.pressure_actual(idx(1)));   % omega_c = sqrt(P_actual)
+			gammaValueActual = gammaData.gamma(1);
 
-			attVals = data.(attenField)(idx);
-			wVals   = data.omega(idx);
+			attVals = gammaData.(attenField)(:);
+			wVals   = gammaData.omega(:);
 			if options.scaleXCoordNum ~= 0
-				zVals = data.coord_num(idx);
+				zVals = gammaData.coord_num(:);
 			else
 				zVals = ones(size(wVals));
 			end
@@ -243,9 +244,4 @@ function str = powerTerm(sym, p)
 		expStr = sprintf('%g', p);
 	end
 	str = [sym '^{' expStr '}'];
-end
-
-function tf = isClose(values, target)
-	% Tolerant equality for floating-point parameter matching.
-	tf = abs(values - target) <= 1e-9 * max(1, abs(target));
 end
