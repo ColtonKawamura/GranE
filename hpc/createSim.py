@@ -37,13 +37,13 @@ def main():
     M_values        = [1]
     Bv_values       = [1, 0.3, 0.1, 0.03, 0.01]
     w_D_values      = [10, 5, 3, 2, 1, 0.7, 0.5, 0.35, 0.3, 0.2]
-    N_values        = [320000]
+    N_values        = [640000]
     P_values        = [0.1, 0.03, 0.01, 0.003, 0.001, 0.0003, 0.0001]
     W_values        = [10]
     seed_values     = [1]
 
     in_path  = "./data/packings/3d/hooke/"
-    out_path = "./data/simMD/3d/hooke/"
+    out_path = "./data/simMD/3d/hooke/large640/"
 
     shear          = False
     fullSpectrum   = False
