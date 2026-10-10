@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sim
+#SBATCH --job-name=pack
 #SBATCH --output=/scratch/%u/matlab_logs/job_%A_%a.out
 #SBATCH --error=/scratch/%u/matlab_logs/job_%A_%a.out
 #SBATCH --array=1-3%3
@@ -22,7 +22,7 @@ export OPENBLAS_NUM_THREADS=1
 
 cd /home/ckawamu/repos/GranE
 
-CMDFILE="${CMDFILE:-hpc/commandsSim.txt}"
+CMDFILE="${CMDFILE:-hpc/commandsRepPack.txt}"
 IDX=$((SLURM_ARRAY_TASK_ID + ${OFFSET:-0}))
 echo "[job=$SLURM_JOB_ID task=$SLURM_ARRAY_TASK_ID] PWD at job start: $PWD"
 echo "[job=$SLURM_JOB_ID task=$SLURM_ARRAY_TASK_ID] SLURM_SUBMIT_DIR: $SLURM_SUBMIT_DIR"
