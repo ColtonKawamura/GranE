@@ -8,6 +8,9 @@ function outData = processData(inputDir, outputFile, options)
 %   inputDir    - folder containing the per-run simMD .mat files
 %   outputFile  - path of the single combined .mat to write (with -struct)
 %   options.threeD - logical, include the z-direction fields (default true)
+%   options.packingDir - (optional) folder of the input packings. Used to look
+%                    up scalMeanCoordNum for runs whose simMD output predates
+%                    the stored mean_coord_num. coord_num is NaN otherwise.
 %
 % Files in inputDir that are not complete simMD outputs (e.g. a previously
 % written combined file, or spectrum-only files from an early exit) are
@@ -22,6 +25,7 @@ function outData = processData(inputDir, outputFile, options)
         options (1,1) struct
     end
     if ~isfield(options, 'threeD'), options.threeD = true; end
+    if ~isfield(options, 'packingDir'), options.packingDir = ""; end
 
     requiredVars = {'attenuation_x_dimensionless', 'attenuation_y_dimensionless', ...
         'wavenumber_x_dimensionless', 'wavenumber_y_dimensionless', ...
@@ -81,6 +85,7 @@ function outData = processData(inputDir, outputFile, options)
     outData.wavenumber_x         = zeros(nFiles, 1);
     outData.wavenumber_y         = zeros(nFiles, 1);
     outData.wavespeed_x          = zeros(nFiles, 1);
+    outData.coord_num            = NaN(nFiles, 1);
 
     if hasMaxAmp
         outData.x0                 = cell(nFiles, 1);
@@ -135,6 +140,7 @@ function outData = processData(inputDir, outputFile, options)
         outData.wavenumber_x(i)       = -d.wavenumber_x_dimensionless;
         outData.wavenumber_y(i)       = -d.wavenumber_y_dimensionless;
         outData.wavespeed_x(i)        = -d.wavespeed_x;
+        outData.coord_num(i)          = lookupCoordNum(d, files(i).name, options.packingDir);
 
         if hasMaxAmp
             outData.x0{i}                 = d.vecPosX0;
@@ -164,4 +170,31 @@ function outData = processData(inputDir, outputFile, options)
 
     fprintf('processData: %d files -> %s\n', nFiles, outputFile);
     save(outputFile, '-struct', 'outData', '-v7.3');
+end
+
+function z = lookupCoordNum(d, simFileName, packingDir)
+    % Mean coordination number for one run: prefer the value simMD stored,
+    % else read scalMeanCoordNum from the packing named in the simMD filename
+    % (<packing>_K<K>_Bv<Bv>_wD<wD>_M<M>.mat).
+    z = NaN;
+    if isfield(d, 'mean_coord_num') && ~isnan(d.mean_coord_num)
+        z = d.mean_coord_num;
+        return;
+    end
+    if isempty(char(packingDir))
+        return;
+    end
+    tok = regexp(simFileName, '^(.+?)_K[^_]+_Bv', 'tokens', 'once');
+    if isempty(tok)
+        return;
+    end
+    packFile = fullfile(packingDir, [tok{1} '.mat']);
+    if ~isfile(packFile)
+        warning('processData:noPacking', 'Packing %s not found for coord_num', packFile);
+        return;
+    end
+    if ismember('scalMeanCoordNum', who('-file', packFile))
+        p = load(packFile, 'scalMeanCoordNum');
+        z = p.scalMeanCoordNum;
+    end
 end

@@ -17,6 +17,12 @@ function plotAttenuation(varargin)
 %   options.plotFlag    - render a figure (default true)
 %   options.lightMode   - lighter palette + light theme (default false)
 %   options.pressureArray - pressures to plot (default: from data)
+%   options.scaleYGamma   - exponent p: plot alpha / gamma^p on the y-axis
+%                           (default 0 = unscaled). Any real p, e.g. 0.5, 1.4;
+%                           negative p multiplies. GranMA convention (divide).
+%   options.scaleXCoordNum - exponent q: plot omega / Z^q on the x-axis, where
+%                           Z is the packing's mean coordination number
+%                           (data.coord_num from processData; default 0).
 
 	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
 	nArgs = numel(varargin);
@@ -53,6 +59,22 @@ function plotAttenuation(varargin)
 	if ~isfield(options,'plotFlag'), options.plotFlag = true; end
 	if ~isfield(options,'lightMode'), options.lightMode = false; end
 	if ~isfield(options,'pressureArray'), options.pressureArray = []; end
+	if ~isfield(options,'scaleYGamma'), options.scaleYGamma = 0; end
+	if ~isfield(options,'scaleXCoordNum'), options.scaleXCoordNum = 0; end
+	validateattributes(options.scaleYGamma, {'numeric'}, {'scalar', 'real', 'finite'});
+	validateattributes(options.scaleXCoordNum, {'numeric'}, {'scalar', 'real', 'finite'});
+
+	if options.scaleXCoordNum ~= 0
+		if ~isfield(data, 'coord_num') || all(isnan(data.coord_num(:)))
+			error('plotAttenuation:noCoordNum', ...
+				['scaleXCoordNum needs data.coord_num. Re-run processData on simMD ' ...
+				 'outputs that store mean_coord_num, or pass options.packingDir to processData.']);
+		elseif any(isnan(data.coord_num(:)))
+			warning('plotAttenuation:partialCoordNum', ...
+				'%d rows have no coord_num and are omitted from the Z-scaled plot.', ...
+				sum(isnan(data.coord_num(:))));
+		end
+	end
 
 	% If no gamma list passed, derive from the data
 	if isempty(gammaValues)
@@ -75,8 +97,10 @@ function plotAttenuation(varargin)
 		ax = axes('Parent', figure_attenuation);
 		hold(ax, 'on');
 
-		ylabel(ax, '$ \hat{\alpha} $', 'FontSize', 20, 'Interpreter', 'latex');
-		xlabel(ax, '$\hat{\omega}$', 'FontSize', 20, 'Interpreter', 'latex');
+		ylabel(ax, scaledLabel('\hat{\alpha}', '\hat{\gamma}', options.scaleYGamma), ...
+			'FontSize', 20, 'Interpreter', 'latex');
+		xlabel(ax, scaledLabel('\hat{\omega}', 'Z', options.scaleXCoordNum), ...
+			'FontSize', 20, 'Interpreter', 'latex');
 		set(ax, 'XScale', 'log');
 		set(ax, 'YScale', 'log');
 		set(get(ax, 'ylabel'), 'rotation', 0);
@@ -121,12 +145,19 @@ function plotAttenuation(varargin)
 
 			attVals = data.(attenField)(idx);
 			wVals   = data.omega(idx);
+			if options.scaleXCoordNum ~= 0
+				zVals = data.coord_num(idx);
+			else
+				zVals = ones(size(wVals));
+			end
 
 			% GranMA default view: discard unphysical fits with alpha > 1.
 			% Non-positive values are left in; the log axis omits them.
+			% The filter acts on the raw alpha, before any axis scaling.
 			keep = ~(attVals > 1);
 			attVals = attVals(keep);
 			wVals   = wVals(keep);
+			zVals   = zVals(keep);
 			if isempty(wVals)
 				continue;
 			end
@@ -134,9 +165,14 @@ function plotAttenuation(varargin)
 			% Sort by omega so the line connects in frequency order.
 			[wVals, sortIdx] = sort(wVals);
 			attVals = attVals(sortIdx);
+			zVals   = zVals(sortIdx);
+
+			% Axis scaling: y = alpha / gamma^p, x = omega / Z^q.
+			plotY = attVals ./ gammaValueActual.^options.scaleYGamma;
+			plotX = wVals ./ zVals.^options.scaleXCoordNum;
 
 			if options.plotFlag
-				plot(ax, wVals, attVals, '-o', ...
+				plot(ax, plotX, plotY, '-o', ...
 					'MarkerSize', markerSize, ...
 					'LineWidth', 1.2, ...
 					'Color', colourP, ...
@@ -159,6 +195,34 @@ function plotAttenuation(varargin)
 			end
 		end
 	end
+end
+
+function str = scaledLabel(base, scaleSym, p)
+	% LaTeX axis label for base / scaleSym^p, e.g. '$\frac{\hat{\alpha}}{\hat{\gamma}^{\frac{1}{2}}}$'.
+	if p == 0
+		str = ['$' base '$'];
+	elseif p > 0
+		str = ['$\frac{' base '}{' powerTerm(scaleSym, p) '}$'];
+	else
+		str = ['$' base '\,' powerTerm(scaleSym, -p) '$'];
+	end
+end
+
+function str = powerTerm(sym, p)
+	% sym^p with p > 0; proper fractions (|p| < 1) are written as \frac{n}{d}.
+	if p == 1
+		str = sym;
+		return;
+	end
+	[n, d] = rat(p, 1e-9);
+	if d == 1
+		expStr = sprintf('%d', n);
+	elseif n < d && d <= 16 && abs(n/d - p) < 1e-9
+		expStr = sprintf('\\frac{%d}{%d}', n, d);
+	else
+		expStr = sprintf('%g', p);
+	end
+	str = [sym '^{' expStr '}'];
 end
 
 function tf = isClose(values, target)
