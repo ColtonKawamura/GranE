@@ -15,10 +15,32 @@ function [matSpring, matDamp, matMass] = matSpringDampMass(packing, dampingConst
 %             y-pos. of particle N
 %             z-pos. of particle N]
 %
+% With friction (2D only) each particle also rotates, so there are f = 3
+% degrees of freedom per particle and every matrix is 3N x 3N:
+%
+%     x(t) = [x_1, y_1, theta_1, ..., x_N, y_N, theta_N]
+%
+% For a contact (i, j) with unit normal n (pointing from i to j) and unit
+% tangent t = z x n = (-n_y, n_x), the projection vectors are
+%
+%     n_hat = [n_x; n_y; 0],  t_i = [t_x; t_y; +R_i],  t_j = [t_x; t_y; -R_j]
+%
+% and the contact adds
+%
+%     K += e_i e_i' ⊗ H_ii + e_j e_j' ⊗ H_jj - e_i e_j' ⊗ H_ij - e_j e_i' ⊗ H_ij'
+%     H_ii = k_n n_hat n_hat' + k_t t_i t_i'
+%     H_jj = k_n n_hat n_hat' + k_t t_j t_j'
+%     H_ij = k_n n_hat n_hat' + k_t t_i t_j'
+%
+% with Γ built the same way from γ_n and γ_t. The mass matrix is
+% diag(m_i, m_i, I_i) per particle with I_i = m_i R_i^2 / 2 (uniform disk).
+% Without friction the frictionless blocks k_n n n' (stiffness) and γ_n I
+% (damping) are used. Neither K form includes a pre-stress term.
+%
 % Arguments:
 %     packing            Struct with the packing information
-%     dampingConstant    Damping parameter
-%     springConstant     Hooke's spring constant
+%     dampingConstant    Damping parameter (normal damping γ_n with friction)
+%     springConstant     Hooke's spring constant (normal stiffness k_n with friction)
 %     mass               Mass of a particle of unit radius
 %
 % Options/Keyword Arguments:
@@ -29,13 +51,26 @@ function [matSpring, matDamp, matMass] = matSpringDampMass(packing, dampingConst
 %     sparseOutput       Generate sparse matrices
 %     uniformMass        Force all particles (even of different sizes) to have the same mass
 %     oldPackingFormat   Set to true if packing is stored in the old format
+%     friction           Include tangential (frictional) contacts and particle
+%                        rotation, giving 3N x 3N matrices (2D only)
+%     tangentialSpringConstant   Tangential stiffness k_t (friction only).
+%                                Defaults to springConstant/3, the
+%                                Cundall-Strack ratio used by pack.m
+%     tangentialDampingConstant  Tangential damping γ_t (friction only).
+%                                Defaults to dampingConstant
 %
-% All options default to false.
+% All logical options default to false.
 %
 % Returns:
 %     matSpring          Stiffness matrix, K (Hessian)
 %     matDamp            Damping matrix, Γ
 %     matMass            Mass matrix, M
+%
+% Example (frictional QEP, dense matrices):
+%     [matK, matGamma, matM] = matSpringDampMass(packing, gamma, K, 1, ...
+%         "periodic", true, "friction", true);
+%     [matPsi, vecLambda] = polyeig(matK, matGamma, matM);
+%     % solves (matK + lambda*matGamma + lambda^2*matM) * psi = 0
 
     arguments
         packing                  (1, 1) struct
@@ -47,10 +82,35 @@ function [matSpring, matDamp, matMass] = matSpringDampMass(packing, dampingConst
         options.sparseOutput     (1, 1) logical = false % true ==> output sparse matrices
         options.uniformMass      (1, 1) logical = false % true ==> assume all particles are of the same mass
         options.oldPackingFormat (1, 1) logical = false % true ==> assume packing is stored in the old format
+        options.friction         (1, 1) logical = false % true ==> tangential contacts + rotation (2D only)
+        options.tangentialSpringConstant  (1, 1) double {mustBeReal} = NaN % k_t; NaN ==> springConstant/3
+        options.tangentialDampingConstant (1, 1) double {mustBeReal} = NaN % γ_t; NaN ==> dampingConstant
     end
 
     % Grab the data out of the packing.
-    [dim, N, dof, positions, radii, boxDims] = getPackingData(packing, options.oldPackingFormat);
+    [dim, N, ~, positions, radii, boxDims] = getPackingData(packing, options.oldPackingFormat);
+    radii = radii(:);
+
+    % Contact constants and degrees of freedom per particle (f).  With
+    % friction each particle also has a rotation theta, so f = dim + 1.
+    consts = struct('kn', springConstant, 'kt', 0, 'gn', dampingConstant, 'gt', 0, 'friction', options.friction);
+    if (options.friction)
+        if (dim ~= 2)
+            error("matSpringDampMass:Friction3DNotSupported", "friction = true is 2D only.");
+        end
+        f = dim + 1;
+        consts.kt = options.tangentialSpringConstant;
+        if (isnan(consts.kt))
+            consts.kt = springConstant/3;
+        end
+        consts.gt = options.tangentialDampingConstant;
+        if (isnan(consts.gt))
+            consts.gt = dampingConstant;
+        end
+    else
+        f = dim;
+    end
+    dof = f*N;
 
     % Which particles touch the left and right walls (2D)?
     if ((dim == 2) && ~options.periodic)
@@ -61,41 +121,40 @@ function [matSpring, matDamp, matMass] = matSpringDampMass(packing, dampingConst
     % Build the stiffness and damping matrices.
     switch (options.algorithm)
     case "cell"
-        [matSpring, matDamp] = buildMatricesCell(N, dim, dof, positions, radii, boxDims, springConstant, options);
+        [matSpring, matDamp] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options);
     case "particle"
-        [matSpring, matDamp] = buildMatricesParticle(N, dim, dof, positions, radii, boxDims, springConstant, options);
+        [matSpring, matDamp] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options);
     otherwise
         error("Not implemented.");
     end
 
-    % Add entries for wall contacts (2D).
+    % Add entries for wall contacts (2D, translational DOFs only).
     if ((dim == 2) && ~options.periodic)
         for (i = 1:1:N)
             if (maskLeftWall(i) || maskRightWall(i))
-                dofs_i = (dim*(i - 1) + 1):(dim*i);
+                dofs_i = (f*(i - 1) + 1):(f*(i - 1) + dim);
                 matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + springConstant*eye(dim);
             end
         end
     end
 
-    % Apply the damping coefficient.
-    matDamp = dampingConstant*matDamp;
-
     % Build the mass matrix.
     if (options.uniformMass)
-        if (options.sparseOutput)
-            matMass = mass*speye(dof);
-        else
-            matMass = mass*eye(dof);
-        end
+        vecMass = mass*ones(N, 1);
     else
         V = pi^(dim/2)/gamma(dim/2 + 1); % Volume of unit ball in R^dim
-        r = reshape(repmat(radii.', dim, 1), dof, 1);
-        if (options.sparseOutput)
-            matMass = (mass*V)*spdiags(r.^dim, 0, dof, dof);
-        else
-            matMass = (mass*V)*diag(r.^dim);
-        end
+        vecMass = (mass*V)*radii.^dim;
+    end
+    if (options.friction)
+        vecInertia = 0.5*vecMass.*radii.^2; % Moment of inertia of a uniform disk
+        vecMassDiag = reshape([vecMass.' ; vecMass.' ; vecInertia.'], dof, 1);
+    else
+        vecMassDiag = reshape(repmat(vecMass.', dim, 1), dof, 1);
+    end
+    if (options.sparseOutput)
+        matMass = spdiags(vecMassDiag, 0, dof, dof);
+    else
+        matMass = diag(vecMassDiag);
     end
 end
 
@@ -112,7 +171,7 @@ function [matSpring, matDamp] = allocateMatrices(dof, dim, sparse)
     end
 end
 
-function [matSpring, matDamp] = buildMatricesCell(N, dim, dof, positions, radii, boxDims, springConstant, options)
+function [matSpring, matDamp] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options)
     % Pre-allocate the outputs.
     [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
 
@@ -173,22 +232,21 @@ function [matSpring, matDamp] = buildMatricesCell(N, dim, dof, positions, radii,
 
                 % If the particles are in contact, add terms for the contact forces.
                 if (r < radii(i) + radii(j))
-                    nhat = dX/r;
-                    Kblock = springConstant*(nhat*nhat');
-                    Dblock = eye(dim);
+                    nhat = -dX/r; % Unit normal pointing from i to j
+                    [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, radii(i), radii(j), dim, consts);
 
-                    dofs_i = (dim*(i - 1) + 1):(dim*i);
-                    dofs_j = (dim*(j - 1) + 1):(dim*j);
+                    dofs_i = (f*(i - 1) + 1):(f*i);
+                    dofs_j = (f*(j - 1) + 1):(f*j);
 
-                    matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Kblock;
-                    matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Kblock;
-                    matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Kblock;
-                    matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Kblock;
+                    matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Hii;
+                    matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Hjj;
+                    matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Hij;
+                    matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Hij.';
 
-                    matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Dblock;
-                    matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Dblock;
-                    matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Dblock;
-                    matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Dblock;
+                    matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Gii;
+                    matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Gjj;
+                    matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Gij;
+                    matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Gij.';
                 end
             end
         end
@@ -199,7 +257,7 @@ function [matSpring, matDamp] = buildMatricesCell(N, dim, dof, positions, radii,
     matDamp = matDamp/2.0;
 end
 
-function [matSpring, matDamp] = buildMatricesParticle(N, dim, dof, positions, radii, boxDims, springConstant, options)
+function [matSpring, matDamp] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options)
     % Pre-allocate the outputs.
     [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
 
@@ -216,24 +274,54 @@ function [matSpring, matDamp] = buildMatricesParticle(N, dim, dof, positions, ra
 
             % If the particles are in contact, add terms for the contact forces.
             if (r < radii(i) + radii(j))
-                nhat = dX/r;
-                Kblock = springConstant*(nhat*nhat');
-                Dblock = eye(dim);
+                nhat = -dX/r; % Unit normal pointing from i to j
+                [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, radii(i), radii(j), dim, consts);
 
-                dofs_i = (dim*(i - 1) + 1):(dim*i);
-                dofs_j = (dim*(j - 1) + 1):(dim*j);
+                dofs_i = (f*(i - 1) + 1):(f*i);
+                dofs_j = (f*(j - 1) + 1):(f*j);
 
-                matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Kblock;
-                matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Kblock;
-                matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Kblock;
-                matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Kblock;
+                matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Hii;
+                matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Hjj;
+                matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Hij;
+                matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Hij.';
 
-                matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Dblock;
-                matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Dblock;
-                matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Dblock;
-                matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Dblock;
+                matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Gii;
+                matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Gjj;
+                matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Gij;
+                matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Gij.';
             end
         end
+    end
+end
+
+function [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, Ri, Rj, dim, consts)
+% Stiffness (H) and damping (G) blocks of one contact (i, j), with nhat the
+% unit normal pointing from i to j.  The contact contributes
+%     [ H_ii  -H_ij ; -H_ij'  H_jj ]
+% to the (i, j) rows/columns of K, and likewise for Γ.
+    if (consts.friction)
+        % Projection vectors on (x, y, theta).  t = z x n, and the third
+        % entries are the lever arms that turn sliding into spin.
+        n  = [nhat ; 0];
+        ti = [-nhat(2) ; nhat(1) ;  Ri];
+        tj = [-nhat(2) ; nhat(1) ; -Rj];
+        nn = n*n.';
+
+        Hii = consts.kn*nn + consts.kt*(ti*ti.');
+        Hjj = consts.kn*nn + consts.kt*(tj*tj.');
+        Hij = consts.kn*nn + consts.kt*(ti*tj.');
+
+        Gii = consts.gn*nn + consts.gt*(ti*ti.');
+        Gjj = consts.gn*nn + consts.gt*(tj*tj.');
+        Gij = consts.gn*nn + consts.gt*(ti*tj.');
+    else
+        Hii = consts.kn*(nhat*nhat.');
+        Hjj = Hii;
+        Hij = Hii;
+
+        Gii = consts.gn*eye(dim);
+        Gjj = Gii;
+        Gij = Gii;
     end
 end
 
