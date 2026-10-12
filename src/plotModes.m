@@ -522,7 +522,7 @@ function Zn = computeMeanCoordNum(packing)
         else
             r  = sqrt(dx.^2 + dy.^2);
         end
-        rSum = vecD + vecD(i);              % contact distance r_i + r_j
+        rSum = (vecD + vecD(i))/2;              % contact distance r_i + r_j
         vecCoordNum(i) = sum(r < rSum & (1:N)' ~= i);
     end
     Zn = mean(vecCoordNum);
