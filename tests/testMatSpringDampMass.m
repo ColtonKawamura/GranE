@@ -136,6 +136,9 @@ assert(boolThrew, 'friction = true should error for 3D packings');
 % 10) the frictional QEP solves with polyeig
 [matPsi, vecLambda] = polyeig(matK, matG, matM);
 assert(numel(vecLambda) == 6*N, 'frictional QEP should have 6N eigenvalues');
-assert(all(real(vecLambda) < 1e-8*max(abs(vecLambda))), 'damped modes should not grow');
+% rigid-body zero modes are defective (lambda = 0 twice), so polyeig only
+% resolves them to ~sqrt(eps); skip them and check the rest decay
+vecLambdaNonZero = vecLambda(abs(vecLambda) > 1e-4*max(abs(vecLambda)));
+assert(all(real(vecLambdaNonZero) < 0), 'damped non-zero modes should decay');
 
 fprintf('testMatSpringDampMass passed.\n');
