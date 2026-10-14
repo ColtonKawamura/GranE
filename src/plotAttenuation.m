@@ -36,6 +36,9 @@ function plotAttenuation(varargin)
 %   options.seed          - plot only this packing seed (default [] = all seeds).
 %                           Must match a seed in data.seed exactly; the figure
 %                           is titled "Seed = <seed>" (GranMA singleSeed style).
+%   options.boolPlotClick - if true, each plotted point is clickable; clicking
+%                           a point opens its amplitude (plotAmp) and phase
+%                           (plotPhase) plots for that omega. Default false.
 
 	% --- Resolve inputs: allow file-path, struct, or mixed forms ---
 	nArgs = numel(varargin);
@@ -77,6 +80,7 @@ function plotAttenuation(varargin)
 	if ~isfield(options,'scaleXCoordNum'), options.scaleXCoordNum = 0; end
 	if ~isfield(options,'scaleXOmegaC'), options.scaleXOmegaC = 0; end
 	if ~isfield(options,'seed'), options.seed = []; end
+	if ~isfield(options,'boolPlotClick'), options.boolPlotClick = false; end
 	validateattributes(options.scaleYGamma, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleYPressure, {'numeric'}, {'scalar', 'real', 'finite'});
 	validateattributes(options.scaleXCoordNum, {'numeric'}, {'scalar', 'real', 'finite'});
@@ -209,11 +213,26 @@ function plotAttenuation(varargin)
 			plotX = wVals .* omegaC.^options.scaleXOmegaC .* zVals.^options.scaleXCoordNum;
 
 			if options.plotFlag
-				plot(ax, plotX, plotY, '-o', ...
+				hLine = plot(ax, plotX, plotY, '-o', ...
 					'MarkerSize', markerSize, ...
 					'LineWidth', 1.2, ...
 					'Color', colourP, ...
 					'DisplayName', sprintf(' %.4f, %.4f', pressureValue, gammaValueActual));
+
+				% ---- Make this curve's points clickable (opt-in) ----
+				if options.boolPlotClick
+					hLine.PickableParts = 'all';
+					hLine.HitTest = 'on';
+					% Store the metadata the click callback needs to identify
+					% the clicked point and re-filter the full data set.
+					hLine.UserData = struct( ...
+						'pressureSet', pressureValue, ...
+						'pressureActual', pressureActual, ...
+						'gammaActual', gammaValueActual, ...
+						'omegaValues', wVals, ...
+						'alphaValues', attVals);
+					hLine.ButtonDownFcn = @(srcClick, evtClick) plotClickAttenuationCallback(srcClick, evtClick, ax, data, options);
+				end
 			end
 		end
 	end
@@ -275,4 +294,74 @@ function str = powerTerm(sym, p)
 		expStr = sprintf('%g', p);
 	end
 	str = [sym '^{' expStr '}'];
+end
+
+% =========================================================================
+%  CLICK CALLBACK — fires when a data curve point is clicked. Finds the
+%  nearest plotted point (in log space), highlights it, then re-filters the
+%  full data set and shows the amplitude and phase plots for that omega.
+% =========================================================================
+function plotClickAttenuationCallback(srcHandle, evtClick, axData, structData, structOptions)
+
+	arguments
+		srcHandle
+		evtClick
+		axData
+		structData (1,1) struct
+		structOptions (1,1) struct
+	end
+
+	cpCurrent = axData.CurrentPoint;
+	scalClickX = cpCurrent(1,1);
+	scalClickY = cpCurrent(1,2);
+
+	vecXData = srcHandle.XData;
+	vecYData = srcHandle.YData;
+
+	% Nearest point in log-log space.
+	vecLogDistSq = (log10(vecXData) - log10(scalClickX)).^2 + ...
+	               (log10(vecYData) - log10(scalClickY)).^2;
+	[~, scalIdx] = min(vecLogDistSq);
+
+	structMeta = srcHandle.UserData;
+	scalOmega = structMeta.omegaValues(scalIdx);
+	scalAlpha = structMeta.alphaValues(scalIdx);
+
+	fprintf('\n--- Clicked Point ---\n');
+	fprintf('  Index in series : %d\n', scalIdx);
+	fprintf('  Plotted (x, y)  : (%.6g, %.6g)\n', vecXData(scalIdx), vecYData(scalIdx));
+	fprintf('  Pressure (set)  : %.4f\n', structMeta.pressureSet);
+	fprintf('  Pressure (actual): %.4f\n', structMeta.pressureActual);
+	fprintf('  Gamma (actual)  : %.4f\n', structMeta.gammaActual);
+	fprintf('  Omega           : %.6g\n', scalOmega);
+	fprintf('  alpha           : %.6g\n', scalAlpha);
+	fprintf('  alpha/omega     : %.6g\n', scalAlpha/scalOmega);
+	fprintf('---------------------\n');
+
+	% Highlight the clicked point on the attenuation plot.
+	tagHighlight = 'ClickHighlight';
+	delete(findobj(axData, 'Tag', tagHighlight));
+	hold(axData, 'on');
+	plot(axData, vecXData(scalIdx), vecYData(scalIdx), 'rp', 'MarkerSize', 18, ...
+		'MarkerFaceColor', 'y', 'Tag', tagHighlight, 'HandleVisibility', 'off');
+
+	% Which seeds to re-plot: the requested seed if one was fixed, else every
+	% seed present in the data.
+	if ~isempty(structOptions.seed)
+		vecSeeds = [structOptions.seed];
+	else
+		vecSeeds = unique(structData.seed(:));
+	end
+
+	for iSeed = 1:numel(vecSeeds)
+		scalSeed = vecSeeds(iSeed);
+		foo = filterData(structData, 'pressure', structMeta.pressureSet, ...
+			'seed', scalSeed, ...
+			'omega', scalOmega, ...
+			'gamma', structMeta.gammaActual);
+		if ~isempty(foo.amplitude_vector_x)
+			plotAmp(foo, 'plot', true);
+			plotPhase(foo, 'plot', true, 'wrapped', false);
+		end
+	end
 end
