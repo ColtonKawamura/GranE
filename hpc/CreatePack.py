@@ -12,6 +12,11 @@ def generate_matlab_command(
     # pack now takes 13 positional args (no name-value 'hertzian' pair);
     # hertzian is only selectable via the optional trailing options struct,
     # which we don't pass here, so it defaults to false (Hooke).
+    #
+    # 3D repeat-tile requires at least one of x/y/z mult to differ from 1,
+    # and pack's default options (13-arg call) include saveFullState = true,
+    # so pack writes the pre-cleanRats '_Full' tile source and then calls
+    # packRepeatTile to produce the 3D superlattice in one MATLAB invocation.
     return (
         f"matlab -nodisplay -nosplash -r \"addpath('./src/'); try; "
         f"pack({N}, {K}, {D}, {G}, {M}, {P_target}, {seed}, "
@@ -21,44 +26,45 @@ def generate_matlab_command(
     )
 
 def main():
-    # Parameter grids
-    N_values        = [1000]
-    K_values        = [100]
-    D_values        = [1]       # Average Diameter
-    G_values        = [1.4]     # Ratio of large to small particles
-    M_values        = [1]       # Mass of particles
-    P_target_values = [.0001, .0003, .001, .003, .01, .03, .1]
-    seed_values     = [1,2]
-    x_mult_values   = [640]
-    y_mult_values   = [1]
-    z_mult_values   = [1]
-    plotit          = False
-    calc_eig        = False
-    save_path       = "./data/packings/3d/hooke/"
+    # Physical parameters (unchanged).
+    K = 100        # spring constant
+    D = 1          # small-particle diameter
+    G = 1.4        # large/small diameter ratio
+    M = 1          # particle mass
+    P_target = 0.001   # target pressure -- matches the previously made Width20 packings
+    seed = 1       # RNG seed
+    plotit = False
+    calc_eig = False
+    save_path = "./data/packings/3d/hooke/"
+
+    # 3D base packings to generate and tile.
+    # Width in the filename = round(N^(1/3)); a "WxWxW" base is N = W^3.
+    # The tiling multiplier x*y*z sets the final particle count:
+    #   20^3 = 8000   -> tile 6 x 5 x 3 = 90   -> 720,000
+    #   40^3 = 64000  -> tile 2 x 2 x 3 = 12   -> 768,000
+    # (both "around N = 700,000")
+    base_packings = [
+        (8000, 6, 5, 3),   # 20x20x20 box, 3D, tiled 6x5x3 -> 720,000
+        (64000, 2, 2, 3),  # 40x40x40 box, 3D, tiled 2x2x3 -> 768,000
+    ]
 
     output_file = os.path.join(os.path.dirname(__file__), "commandsPack.txt")
 
     with open(output_file, "w") as file:
-        for N in N_values:
-            for K in K_values:
-                for D in D_values:
-                    for G in G_values:
-                        for M in M_values:
-                            for P_target in P_target_values:
-                                for seed in seed_values:
-                                    for x_mult in x_mult_values:
-                                        for y_mult in y_mult_values:
-                                            for z_mult in z_mult_values:
-                                                command = generate_matlab_command(
-                                                        N, K, D, G, M,
-                                                        P_target, seed,
-                                                        plotit, x_mult, y_mult, z_mult,
-                                                        calc_eig, save_path
-                                                        )
-                                                file.write(command + "\n")
+        for N, x_mult, y_mult, z_mult in base_packings:
+            command = generate_matlab_command(
+                    N, K, D, G, M,
+                    P_target, seed,
+                    plotit, x_mult, y_mult, z_mult,
+                    calc_eig, save_path
+                    )
+            file.write(command + "\n")
 
     print(f"Commands written to: {output_file}")
+    for N, x_mult, y_mult, z_mult in base_packings:
+        width = int(round(N ** (1.0 / 3.0)))
+        print(f"  N={N} ({width}^3) tile {x_mult}x{y_mult}x{z_mult} "
+              f"(x{x_mult*y_mult*z_mult}) -> N_tiled={N * x_mult * y_mult * z_mult}")
 
 if __name__ == "__main__":
     main()
-
