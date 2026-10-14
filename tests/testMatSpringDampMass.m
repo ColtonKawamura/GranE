@@ -4,23 +4,50 @@
 
 clearvars
 
-% ---- small, disordered, periodic 2D packing (every particle has contacts)
-rng(1);
-scalNx = 4;
-scalNy = 4;
-scalSpacing = 0.95;
-[matGridX, matGridY] = meshgrid(0:scalNx-1, 0:scalNy-1);
-vecPosX = scalSpacing*(matGridX(:) + 0.5) + 0.02*randn(scalNx*scalNy, 1);
-vecPosY = scalSpacing*(matGridY(:) + 0.5) + 0.02*randn(scalNx*scalNy, 1);
-vecDiameter = 1.0 + 0.05*rand(scalNx*scalNy, 1);
-packing = struct( ...
-    'vecPosX',        vecPosX, ...
-    'vecPosY',        vecPosY, ...
-    'scalBoxWidthX',  scalNx*scalSpacing, ...
-    'scalBoxHeightY', scalNy*scalSpacing, ...
-    'vecDiameter',    vecDiameter);
+% Resolve the repo root from this file's location so the test works no matter
+% what the current folder is (run() executes scripts from their own folder).
+strRepoRoot = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(strRepoRoot, 'src'));
 
-N  = numel(vecPosX);
+% ---- Real 2D frictional packing from pack.m ----
+% Replace the synthetic perturbed grid with a genuine jammed packing built by
+% the DEM compression protocol in pack.m (Cundall-Strack friction, bidisperse
+% disks). N is nominally 1000; the saved backbone count (after cleanRats
+% rattler removal) can be a little lower.
+% pack.m names it 2D_N1000_P0.001_Width32_Seed1.mat (Width = round(sqrt(1000)) = 32).
+strPackDir = fullfile(strRepoRoot, 'data');
+strPackingFile = fullfile(strPackDir, '2D_N1000_P0.001_Width32_Seed1.mat');
+packOpts = struct( ...
+    'flagFrictionOn',      true, ...  % Cundall-Strack friction (2D only)
+    'scalFricCoef',        0.5, ...   % Coulomb coefficient mu
+    'scalTangentialK',     1/3, ...   % Kt/K ratio (Cundall-Strack default)
+    'scalGammaNormal',     0, ...     % normal dashpot (0 = original scheme)
+    'scalGammaTangential', 0, ...     % tangential dashpot (off)
+    'saveFrictionalState', false, ...
+    'saveFullState',       false);
+pack(1000, 100, 1, 1.4, 1, 0.001, 1, false, 1, 1, 0, false, [strPackDir, filesep], packOpts);
+
+% Load the jammed packing and hand it to matSpringDampMass.
+sPack = load(strPackingFile);
+assert(sPack.N >= 500, ...
+    sprintf('frictional packing did not jam: backbone N = %d', sPack.N));
+
+packing = struct( ...
+    'vecPosX',        sPack.vecPosX, ...
+    'vecPosY',        sPack.vecPosY, ...
+    'scalBoxWidthX',  sPack.scalBoxWidthX, ...
+    'scalBoxHeightY', sPack.scalBoxHeightY, ...
+    'vecDiameter',    sPack.vecDiameter);
+
+% Geometry for the independent energy-form check below.
+vecPosX = sPack.vecPosX;
+vecPosY = sPack.vecPosY;
+vecDiameter = sPack.vecDiameter;
+
+% Clean up the generated file; the test only needs it in memory.
+delete(strPackingFile);
+
+N = sPack.N;
 kn = 100;
 kt = 30;
 gn = 0.2;
@@ -118,7 +145,7 @@ assert(isequal(matKDef, matKExp) && isequal(matGDef, matGExp), ...
 assert(issparse(matKCell) && issparse(matGCell) && issparse(matMCell), 'sparseOutput should give sparse matrices');
 assert(norm(full(matKCell) - matK, 'fro') < tol*norm(matK, 'fro'), 'cell and particle K should agree');
 assert(norm(full(matGCell) - matG, 'fro') < tol*norm(matG, 'fro'), 'cell and particle Gamma should agree');
-assert(norm(full(matMCell) - matM, 'fro') == 0, 'sparse and dense M should agree');
+assert(norm(full(matMCell) - matM) == 0, 'sparse and dense M should agree');
 
 % 9) friction is 2D only
 packing3D = struct( ...
