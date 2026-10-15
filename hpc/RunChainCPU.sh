@@ -8,7 +8,7 @@
 #SBATCH --array=1-3%3
 #SBATCH --partition=capacity
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=6G
+#SBATCH --mem=48G   # 40^3 base pack() builds a 64000x64000 contact-dist matrix (~33 GB)
 #SBATCH --time=6-00:00:00
 #SBATCH --mail-type=START,END,FAIL
 #SBATCH --mail-user=c.kawamura@uva.nl
