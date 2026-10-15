@@ -60,4 +60,4 @@ If no corresponding test file exists in `test/`, stop and notify the user before
 - Always use (source venv/bin/activate && python3 CreatePack.py) to create the packings
 - Doing multiple tile sizes, for example, a 10x10x10 tile and a 20x20x20 tile you will have to do `CreatePack.py` twice. One for the 20x20x20 tile, save those commands to a temporary file, then do the 10x10x10 commands, then append those commands with the 20x20x20 commands.
 - DO NOT change `CreatePack.py` without my consent.
-
+- Always only tile in the x direction, unless explicity told otherwise
