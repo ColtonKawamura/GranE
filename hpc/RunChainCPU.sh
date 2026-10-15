@@ -8,7 +8,7 @@
 #SBATCH --array=1-3%3
 #SBATCH --partition=capacity
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=48G   # 40^3 base pack() builds a 64000x64000 contact-dist matrix (~33 GB)
+#SBATCH --mem=12G   # 30^3 (27000) base contact-dist matrix ~5.8 GB; 12G is safe headroom (was 48G)
 #SBATCH --time=6-00:00:00
 #SBATCH --mail-type=START,END,FAIL
 #SBATCH --mail-user=c.kawamura@uva.nl
