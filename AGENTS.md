@@ -32,6 +32,11 @@ All assertions must pass before finishing. If the test fails, fix the source fil
 
 If no corresponding test file exists in `test/`, stop and notify the user before proceeding.
 
+## Temporary files
+- Never create temporary files, such as probing scripts or functiosn in this repo
+- Always put them in system's `tmp` folder so they are flushed by the system
+
+
 ## Key Directories
 
 - **`src/`** - MATLAB source files for packing generation and data processing
@@ -43,3 +48,16 @@ If no corresponding test file exists in `test/`, stop and notify the user before
 
  Always run matlab from the project root:
 `matlab -batch "cd('/Users/coltonkawamura/repos/GranE'); run('test/TEST<filename>.m')"`
+
+
+## HIPSTER
+- to sync files with hipster, always push your branch to remote, then ssh into hipster, then switch to the branch on hipster
+- then on hipster, pull from remote to get the changes.
+
+## Packing Generation
+- Use `CreatePack.py` to create packings.
+- Always build commandsPack.txt and commandsRepPack.txt locally before syncing to hipster.
+- Always use (source venv/bin/activate && python3 CreatePack.py) to create the packings
+- Doing multiple tile sizes, for example, a 10x10x10 tile and a 20x20x20 tile you will have to do `CreatePack.py` twice. One for the 20x20x20 tile, save those commands to a temporary file, then do the 10x10x10 commands, then append those commands with the 20x20x20 commands.
+- DO NOT change `CreatePack.py` without my consent.
+
