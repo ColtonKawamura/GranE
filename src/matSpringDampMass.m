@@ -290,12 +290,16 @@ function [matSpring, matDamp, counts] = buildMatricesCell(N, dim, f, dof, positi
     counts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
 
     % Data for the cell-based method for checking particle contacts.
-    baseCellWidth    = 4.0*max(radii);                 % Nominal width of each cell
-    cellCounts       = round(boxDims/baseCellWidth);   % Number of cells in each dimension
-    cellWidths       = boxDims./cellCounts;            % Actual cell widths
-    cellCounts       = ceil(boxDims./cellWidths);      % Update cell counts to use actual widths
-    particlesToCells = ceil(positions./cellWidths.');  % ith row contains cell numbers for ith particle
-    cellsToParticles = cell(cellCounts.');             % (i, j, k) entry lists particles in cell (i, j, k)
+    % The cells must tile the box exactly (cellCounts.*cellWidths == boxDims) so
+    % that the periodic cell wrap matches the minimum-image wrap. Recomputing the
+    % count as ceil(boxDims./cellWidths) is a floating-point trap: boxDims./
+    % (boxDims./k) can come out as k + 2e-15, which ceil turns into k + 1 cells
+    % that no longer tile the box, and contacts across the boundary are dropped.
+    baseCellWidth    = 4.0*max(radii);                         % Nominal width of each cell
+    cellCounts       = max(round(boxDims/baseCellWidth), 1);   % Number of cells in each dimension
+    cellWidths       = boxDims./cellCounts;                    % Actual cell widths (tile the box)
+    particlesToCells = min(max(ceil(positions./cellWidths.'), 1), cellCounts.'); % ith row: cell numbers of particle i
+    cellsToParticles = cell(cellCounts.');                     % (i, j, k) entry lists particles in cell (i, j, k)
 
     % Build the map from cell numbers the list of particles each cell contains.
     ii = cell(1, dim);
