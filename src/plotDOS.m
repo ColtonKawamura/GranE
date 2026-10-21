@@ -50,6 +50,13 @@ function plotDOS(resultsDir, options)
 %       plotDOS('data/eigenData/3d/hooke/iso3d-uniform-mass/')
 %       opts.argPressure = [0.01 0.1]; opts.numBins = 512;
 %       plotDOS('data/eigenData/3d/hooke/iso3d-uniform-mass/', opts)
+%
+%         o = struct();
+%         o.argN = 1000;
+%         o.argGamma = 0.001;
+%         o.flagScaleByCutoff = false;
+%         o.numBins = 40;
+%         plotDOS('data/eigenData/3d/hooke/iso3d-uniform-mass/', o);
 
     if nargin < 2 || isempty(options)
         options = struct();
