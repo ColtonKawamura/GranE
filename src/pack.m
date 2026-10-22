@@ -27,7 +27,8 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             'scalGammaNormal', 0, ...
             'scalGammaTangential', 0, ...
             'saveFrictionalState', false, ...
-            'saveFullState', true)
+            'saveFullState', true, ...
+            'hertzMindlin', false)
     end
 
      % Backfill any option fields a caller omitted so both the frictionless
@@ -56,8 +57,21 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     if ~isfield(sOptions, 'saveFullState')
         sOptions.saveFullState = true;
     end
+    if ~isfield(sOptions, 'hertzMindlin')
+        sOptions.hertzMindlin = false;
+    end
     boolHertzian      = sOptions.hertzian;       % Hertzian (vs. linear) contact law
     boolSaveFullState = sOptions.saveFullState;  % also save the pre-cleanRats tile source
+    % Hertz-Mindlin friction: the tangential stiffness follows the Hertz
+    % normal stiffness, k_t = (K_t/K) * k_n(delta) with k_n = 2 K sqrt(R_eff delta),
+    % and the tangential force is updated incrementally, dF_t = -k_t(delta) dU
+    % (Mindlin). Without it a Hertzian frictional packing keeps the constant
+    % Cundall-Strack k_t = K_t. Opt-in, so every existing caller is unchanged.
+    boolHertzMindlin  = sOptions.hertzMindlin;
+    if boolHertzMindlin && ~(boolHertzian && sOptions.flagFrictionOn)
+        error('pack:HertzMindlinNeedsHertzFriction', ...
+            'hertzMindlin = true needs hertzian = true and flagFrictionOn = true.');
+    end
 
     % check to see if 3d path is needed
     boolThreeD = (scalZMult ~= 0);
@@ -91,14 +105,20 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         end
     else
         scalRoundedWidth = round(sqrt(scalNumParticles));
-        if boolHertzian
+        if boolHertzMindlin
+            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_HertzMindlin.mat', ...
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
+        elseif boolHertzian
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
                 strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
             strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
                 strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         end
-        if boolHertzian
+        if boolHertzMindlin
+            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_HertzMindlin.mat', ...
+                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
+        elseif boolHertzian
             strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
                 strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
         else
@@ -243,10 +263,29 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     % so use a conservative estimate based on largest R and largest delta
     % largest Reff ~ G*D/4 (large-large contact)
     % and largest delta ~ 1e-1 (max target pressure)
-    if boolHertzian
+    if boolHertzMindlin
+        % Same estimate, but with the overlap scale of THIS run: the overlap
+        % is ~P_target (pack.m's P is an overlap scale), and 20*P_target
+        % covers the compression overshoot. The 1e-1 bound of the generic
+        % Hertzian branch makes dt ~(0.1/P)^(1/4) too small at low pressure.
+        scalTimestep = 2*pi * sqrt(scalMass / (2*scalSpringConstant*sqrt(scalDiameterRatio*scalDiameterSmall/4 .* min(1E-1, 20*scalPressureTarget)))) * 0.01;
+    elseif boolHertzian
         scalTimestep = 2*pi * sqrt(scalMass / (2*scalSpringConstant*sqrt(scalDiameterRatio*scalDiameterSmall/4 .* 1E-1))) * 0.01;
     else
         scalTimestep = 2*pi * sqrt(scalMass/scalSpringConstant) * 0.01;
+    end
+    % Hertz-Mindlin: keep the damping RATIO of the Hookean protocol. A Hertz
+    % contact at overlap ~P_target is a spring of stiffness
+    % K_ref = 2 K sqrt(R_ref P_target), much softer than K at low pressure, so the
+    % fixed drag and dashpot coefficients (tuned for stiffness K) would make the
+    % grains strongly overdamped and the packing creeps for millions of steps.
+    % Damping ratios scale as gamma/sqrt(k m), so the coefficients are scaled by
+    % sqrt(K_ref/K).
+    if boolHertzMindlin
+        scalKRef = 2*scalSpringConstant*sqrt(scalDiameterRatio*scalDiameterSmall/4 * scalPressureTarget);
+        scalDampScale = sqrt(scalKRef/scalSpringConstant);
+        scalDissipationVelocity = scalDissipationVelocity * scalDampScale;
+        scalDissipationAbsolute = scalDissipationAbsolute * scalDampScale;
     end
     scalMaxSteps = 5e6; % sane hard cap: every phase now converges on a frozen
                         % box (scalSlowConvSteps / frictional controller) well
@@ -322,6 +361,11 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     if boolFrictionOn
         matDispTan       = zeros(scalNumParticles, scalNumParticles);
         matDispTanStuck  = false(scalNumParticles, scalNumParticles);
+    end
+    % Hertz-Mindlin: the tangential FORCE is the stored state (incremental
+    % update), stored at the same linear index i + N*(j-1).
+    if boolHertzMindlin
+        matForceTan      = zeros(scalNumParticles, scalNumParticles);
     end
 
 %% Verlet cell list setup
@@ -671,11 +715,31 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             vecVelTan = vecVelTan - (...     % subtract rotational contribution
                 vecOmegaHalf(vecContactNN) .* vecRi + vecOmegaHalf(vecContactMM) .* vecRj);
 
+            vecFnAbs = abs(vecForceMag);                         % [scalNumContacts x 1] |F_n|
+            if boolHertzMindlin
+                % Mindlin: k_t(delta) = (K_t/K) * 2 K sqrt(R_eff delta), and the
+                % tangential force is advanced incrementally,
+                %   F_t(t+dt) = F_t(t) - k_t(delta) * vel(t+dt/2) * dt,
+                % so a change of the overlap at fixed tangential position does
+                % not change F_t (it only changes the stiffness of the next step).
+                vecKtContact = scalKtOverK * 2 * scalSpringConstant .* sqrt(vecRadiiEff .* vecOverlap);   % [scalNumContacts x 1]
+                vecFtSpring = matForceTan(vecLinIdx);            % [scalNumContacts x 1] stored tangential force
+                vecFtSpring(~vecStuck) = 0;
+                vecFtSpring = vecFtSpring - vecKtContact .* vecVelTan * scalTimestep;
+                % Coulomb cap: |F_t| <= mu*|F_n|
+                vecFtSpring = sign(vecFtSpring) .* min(scalMu .* vecFnAbs, abs(vecFtSpring));
+                matForceTan(vecLinIdx) = vecFtSpring;
+                matDispTanStuck(vecLinIdx) = true;
+                vecFtMag = vecFtSpring;                          % [scalNumContacts x 1] tangential force magnitude
+                % Equivalent spring displacement (F_t = -k_t U) and energy F_t^2/(2 k_t)
+                vecDispTan = -vecFtSpring ./ vecKtContact;
+                vecPotentialContact = vecPotentialContact + 0.5 * vecKtContact .* (vecDispTan .^ 2);
+                scalTangentialPE = sum(0.5 * vecKtContact .* (vecDispTan .^ 2));   % [1 x 1] tangential PE this step
+            else
             % Advance tangential displacement:  disp(t+dt) = disp(t) + vel(t+dt/2)*dt
             vecDispTan = vecDispTan + vecVelTan * scalTimestep;
 
             % Coulomb cap: |F_t| = K_t*|disp| <= mu*|F_n|  ->  clamp the displacement
-            vecFnAbs = abs(vecForceMag);                         % [scalNumContacts x 1] |F_n|
             vecDispTanCap = scalMu .* vecFnAbs ./ scalKt;        % [scalNumContacts x 1] Coulomb cap = mu*|F_n|/K_t
             vecDispTan = sign(vecDispTan) .* min(vecDispTanCap, abs(vecDispTan));
             matDispTanStuck(vecLinIdx) = true;
@@ -686,6 +750,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             % Tangential contact energy: 0.5 * K_t * disp^2
             vecPotentialContact = vecPotentialContact + 0.5 * scalKt .* (vecDispTan .^ 2);
             scalTangentialPE = sum(0.5 * scalKt .* (vecDispTan .^ 2));   % [1 x 1] tangential PE this step
+            end
 
             % Optional tangential viscous damping (dashpot on the slip rate)
             if scalGammaTangential > 0
@@ -727,6 +792,9 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             if ~isempty(vecSeparating)
                 matDispTan(vecSeparating) = 0;
                 matDispTanStuck(vecSeparating) = false;
+                if boolHertzMindlin
+                    matForceTan(vecSeparating) = 0;
+                end
             end
         end
 
@@ -1068,7 +1136,11 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             vecPosX, vecPosY, vecDiameter, ...
             scalBoxWidthX, scalBoxHeightY, ...
             matDispTan, scalSpringConstant, scalKt, scalMu, ...
-            scalGammaNormal, scalGammaTangential, scalMass);
+            scalGammaNormal, scalGammaTangential, scalMass, boolHertzian, boolHertzMindlin);
+        if boolHertzMindlin
+            % Mindlin stores the force itself: read F_t from it, not -K_t*U.
+            sFricState.vecFt = matForceTan(sFricState.vecContactNN + scalNumParticles * (sFricState.vecContactMM - 1));
+        end
         strFricFilename = [strFilename(1:end-4) '_FricState.mat'];
         sFricStateFile.fricState = sFricState;   % stored in the .mat as 'fricState'
         save(strFricFilename, '-struct', 'sFricStateFile');
@@ -1632,7 +1704,7 @@ function sFricState = buildFricState( ...
         vecPosX, vecPosY, vecDiameter, ...
         scalBoxWidthX, scalBoxHeightY, ...
         matDispTan, scalSpringConstant, scalKt, scalMu, ...
-        scalGammaNormal, scalGammaTangential, scalMass)
+        scalGammaNormal, scalGammaTangential, scalMass, boolHertzian, boolHertzMindlin)
 % buildFricState -- Rebuild the final contact graph at ORIGINAL
 % particle indices (before cleanRats) and export a fricState struct.
 %
@@ -1648,6 +1720,18 @@ function sFricState = buildFricState( ...
 %   N   original particle count
 %   boxLx / boxLy
 %   matDispTan  [N x N]  tangential spring displacement history
+%   strContactLaw        'hooke', 'hertz' or 'hertzMindlin'
+%
+% vecFn is the force of the contact law the packing was made with:
+% -K*overlap (Hooke) or -(4/3) K sqrt(R_eff) overlap^(3/2) (Hertz), with
+% R_eff = R_i R_j/(R_i + R_j). For Hertz-Mindlin the caller overwrites vecFt
+% with the stored incremental tangential force.
+    if nargin < 13
+        boolHertzian = false;
+    end
+    if nargin < 14
+        boolHertzMindlin = false;
+    end
 
     scalNumParticles = size(vecPosX, 1);
     vecRadius        = vecDiameter / 2;
@@ -1681,7 +1765,12 @@ function sFricState = buildFricState( ...
             scalNormalY  = scalSepY / scalSepDist;
             scalUnitTanX =  scalNormalY;
             scalUnitTanY = -scalNormalX;
-            scalFn       = -scalSpringConstant * scalOverlap;
+            if boolHertzian
+                scalRadiusEff = (vecDiameter(idxNN) * vecDiameter(idxMM) / 4) / scalContactDist;   % R_i R_j/(R_i + R_j)
+                scalFn = -(4/3) * scalSpringConstant * sqrt(scalRadiusEff) * scalOverlap^(3/2);
+            else
+                scalFn = -scalSpringConstant * scalOverlap;
+            end
             scalDispTan  = matDispTan(idxNN + scalNumParticles * (idxMM - 1));   % [1 x 1] pair tangential displacement
             scalFt       = -scalKt * scalDispTan;
             sFricState.vecContactNN = [sFricState.vecContactNN; idxNN];
@@ -1706,6 +1795,13 @@ function sFricState = buildFricState( ...
     sFricState.boxLx = scalBoxWidthX;
     sFricState.boxLy = scalBoxHeightY;
     sFricState.matDispTan = matDispTan;
+    if boolHertzMindlin
+        sFricState.strContactLaw = 'hertzMindlin';
+    elseif boolHertzian
+        sFricState.strContactLaw = 'hertz';
+    else
+        sFricState.strContactLaw = 'hooke';
+    end
 end
 
 function [vecFrameSize, boolOk] = writeFricGifFrame(hFig, strGifFilename, vecFrameSize, ...

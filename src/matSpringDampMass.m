@@ -1,6 +1,7 @@
-function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing, dampingConstant, springConstant, mass, options)
+function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing, dampingConstant, springConstant, mass, options)
 % Computes the system matrices K, Γ, and M for a granular packing (2D or 3D)
-% with Hooke's force law described by the system of ODEs
+% with Hooke's force law (default) or the Hertz(-Mindlin) force law (see
+% "contactLaw" below) described by the system of ODEs
 %
 %     M*x''(t) + Γ*x'(t) + K*x(t) = 0
 %
@@ -44,9 +45,10 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
 % These options follow the dynamical matrix of Henkes, van Hecke & van
 % Saarloos, EPL 90, 14003 (2010), eq. (2), whose packings are prepared as in
 % Shundyak, van Hecke & van Saarloos, PRE 75, 010301(R) (2007). Henkes et al.
-% use Hertz-Mindlin contacts; here k_n and k_t stay Hookean constants, as in
-% pack.m. Both options are off by default, so K, Γ and M are unchanged unless
-% they are requested.
+% use Hertz-Mindlin contacts; by default k_n and k_t here are Hookean
+% constants, and contactLaw = "hertz" switches to Hertz-Mindlin (option 3).
+% All options are off by default, so K, Γ and M are unchanged unless they are
+% requested.
 %
 % 1) stressed = true: the pre-stress (geometric) term.
 %    The exact Hessian of a pair potential V(r) for one contact is
@@ -87,8 +89,24 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
 %    on the particles before cleanRats, so pass the full state saved with
 %    saveFullState = true (file *_Full.mat) as the packing, not the backbone
 %    .mat. A contact counts as fully mobilized when m >= 1 - mobilizationTol.
-%    fricState stores the linear normal force -K*overlap, so this classification
-%    is only meaningful for Hookean packings.
+%    fricState stores the normal force of the contact law the packing was
+%    made with (pack.m's Hookean or Hertzian force).
+%
+% 3) contactLaw = "hertz": Hertz normal force, and Hertz-Mindlin tangential
+%    stiffness with friction, matching pack.m with hertzian = true (and
+%    hertzMindlin = true). For a contact with overlap delta = R_i + R_j - r and
+%    R_eff = R_i R_j / (R_i + R_j), pack.m uses
+%        f_n = (4/3) K sqrt(R_eff) delta^(3/2),
+%    so the linearized normal stiffness is
+%        k_n = df_n/d(delta) = 2 K sqrt(R_eff delta),
+%    and Mindlin's tangential stiffness is proportional to the contact radius
+%    sqrt(R_eff delta) as well:
+%        k_t = (k_t0/K) k_n,   k_t0 = tangentialSpringConstant (default K/3).
+%    Both stiffnesses therefore vary from contact to contact (k ~ delta^(1/2),
+%    Henkes et al.), and the pre-stress term uses the Hertz f_n. Because pack.m
+%    advances the Mindlin tangential force incrementally (dF_t = -k_t dU), a
+%    change of the overlap does not change F_t to first order, so eq. (2) of
+%    Henkes et al. is the complete linearization. Damping stays constant.
 %
 % Arguments:
 %     packing            Struct with the packing information
@@ -118,6 +136,8 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
 %                        friction = true and fricState)
 %     mobilizationTol    m >= 1 - mobilizationTol counts as fully mobilized
 %                        (default 1e-6)
+%     contactLaw         "hooke" (default) or "hertz" (Hertz-Mindlin with
+%                        friction); see option 3 above
 %
 % All logical options default to false.
 %
@@ -125,7 +145,7 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
 %     matSpring          Stiffness matrix, K (Hessian)
 %     matDamp            Damping matrix, Γ
 %     matMass            Mass matrix, M
-%     contactInfo        Struct with the contact network that K was built from:
+%     sContactInfo       Struct with the contact network that K was built from:
 %                          numContacts       particle-particle contacts
 %                          vecNumContacts    [N x 1] contacts per particle
 %                          numMobilized      contacts with m >= 1 - mobilizationTol
@@ -167,6 +187,7 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
         options.fricState        (1, 1) struct = struct() % pack.m fricState (per-contact forces)
         options.slipMobilized    (1, 1) logical = false % true ==> k_t = 0 on fully mobilized contacts
         options.mobilizationTol  (1, 1) double {mustBeNonnegative} = 1e-6 % m >= 1 - tol ==> fully mobilized
+        options.contactLaw       (1, 1) string {mustBeMember(options.contactLaw, ["hooke", "hertz"])} = "hooke"
     end
 
     % Grab the data out of the packing.
@@ -194,16 +215,18 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
     end
     dof = f*N;
 
-    % Pre-stress term and slipping (fully mobilized) contacts.
-    consts.stressed = options.stressed;
-    consts.slipMobilized = options.slipMobilized;
-    consts.useFricState = ~isempty(fieldnames(options.fricState));
-    if (options.slipMobilized && ~(options.friction && consts.useFricState))
+    % Pre-stress term, slipping (fully mobilized) contacts and contact law.
+    consts.boolStressed = options.stressed;
+    consts.boolSlipMobilized = options.slipMobilized;
+    consts.boolUseFricState = ~isempty(fieldnames(options.fricState));
+    consts.boolHertz = (options.contactLaw == "hertz");
+    consts.scalKtOverKn = consts.kt/consts.kn;   % Mindlin: k_t = (k_t0/K) k_n(delta)
+    if (options.slipMobilized && ~(options.friction && consts.boolUseFricState))
         error("matSpringDampMass:SlipNeedsFricState", ...
             "slipMobilized = true needs friction = true and the fricState saved by pack.m.");
     end
     vecMobilization = [];
-    if (consts.useFricState)
+    if (consts.boolUseFricState)
         [consts.matMobilized, consts.matInFricState, vecMobilization] = ...
             mobilizedContacts(options.fricState, N, radii, options.mobilizationTol);
     end
@@ -217,9 +240,9 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
     % Build the stiffness and damping matrices.
     switch (options.algorithm)
     case "cell"
-        [matSpring, matDamp, counts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options);
+        [matSpring, matDamp, sCounts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options);
     case "particle"
-        [matSpring, matDamp, counts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options);
+        [matSpring, matDamp, sCounts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options);
     otherwise
         error("Not implemented.");
     end
@@ -254,21 +277,21 @@ function [matSpring, matDamp, matMass, contactInfo] = matSpringDampMass(packing,
     end
 
     % Summary of the contact network K was built from.
-    contactInfo = struct();
-    contactInfo.numContacts = sum(counts.vecNumContacts)/2;
-    contactInfo.vecNumContacts = counts.vecNumContacts;
-    if (consts.useFricState)
-        contactInfo.numMobilized = counts.numMobilized;
-        contactInfo.numNotInFricState = counts.numNotInFricState;
-        if (counts.numNotInFricState > 0)
+    sContactInfo = struct();
+    sContactInfo.numContacts = sum(sCounts.vecNumContacts)/2;
+    sContactInfo.vecNumContacts = sCounts.vecNumContacts;
+    if (consts.boolUseFricState)
+        sContactInfo.numMobilized = sCounts.numMobilized;
+        sContactInfo.numNotInFricState = sCounts.numNotInFricState;
+        if (sCounts.numNotInFricState > 0)
             warning("matSpringDampMass:ContactsNotInFricState", ...
-                "%d contacts are not in fricState and are treated as not mobilized.", counts.numNotInFricState);
+                "%d contacts are not in fricState and are treated as not mobilized.", sCounts.numNotInFricState);
         end
     else
-        contactInfo.numMobilized = NaN;
-        contactInfo.numNotInFricState = NaN;
+        sContactInfo.numMobilized = NaN;
+        sContactInfo.numNotInFricState = NaN;
     end
-    contactInfo.vecMobilization = vecMobilization;
+    sContactInfo.vecMobilization = vecMobilization;
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -284,10 +307,10 @@ function [matSpring, matDamp] = allocateMatrices(dof, dim, sparse)
     end
 end
 
-function [matSpring, matDamp, counts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options)
+function [matSpring, matDamp, sCounts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options)
     % Pre-allocate the outputs.
     [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
-    counts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
+    sCounts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
 
     % Data for the cell-based method for checking particle contacts.
     % The cells must tile the box exactly (cellCounts.*cellWidths == boxDims) so
@@ -369,9 +392,9 @@ function [matSpring, matDamp, counts] = buildMatricesCell(N, dim, f, dof, positi
 
                     % Each contact is visited once from each side, so only
                     % particle i is counted here and the totals are halved.
-                    counts.vecNumContacts(i) = counts.vecNumContacts(i) + 1;
-                    counts.numMobilized      = counts.numMobilized + boolSlip/2;
-                    counts.numNotInFricState = counts.numNotInFricState + (consts.useFricState && ~boolKnown)/2;
+                    sCounts.vecNumContacts(i) = sCounts.vecNumContacts(i) + 1;
+                    sCounts.numMobilized      = sCounts.numMobilized + boolSlip/2;
+                    sCounts.numNotInFricState = sCounts.numNotInFricState + (consts.boolUseFricState && ~boolKnown)/2;
                 end
             end
         end
@@ -382,10 +405,10 @@ function [matSpring, matDamp, counts] = buildMatricesCell(N, dim, f, dof, positi
     matDamp = matDamp/2.0;
 end
 
-function [matSpring, matDamp, counts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options)
+function [matSpring, matDamp, sCounts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options)
     % Pre-allocate the outputs.
     [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
-    counts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
+    sCounts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
 
     % Check for contact between each pair of particles to generate the
     % stiffness and damping matrices.
@@ -417,44 +440,59 @@ function [matSpring, matDamp, counts] = buildMatricesParticle(N, dim, f, dof, po
                 matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Gij;
                 matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Gij.';
 
-                counts.vecNumContacts(i) = counts.vecNumContacts(i) + 1;
-                counts.vecNumContacts(j) = counts.vecNumContacts(j) + 1;
-                counts.numMobilized      = counts.numMobilized + boolSlip;
-                counts.numNotInFricState = counts.numNotInFricState + (consts.useFricState && ~boolKnown);
+                sCounts.vecNumContacts(i) = sCounts.vecNumContacts(i) + 1;
+                sCounts.vecNumContacts(j) = sCounts.vecNumContacts(j) + 1;
+                sCounts.numMobilized      = sCounts.numMobilized + boolSlip;
+                sCounts.numNotInFricState = sCounts.numNotInFricState + (consts.boolUseFricState && ~boolKnown);
             end
         end
     end
 end
 
-function [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, Ri, Rj, r, dim, consts, boolSlip)
+function [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, scalRadiusI, scalRadiusJ, scalDist, dim, consts, boolSlip)
 % Stiffness (H) and damping (G) blocks of one contact (i, j), with nhat the
-% unit normal pointing from i to j and r the center distance.  The contact
-% contributes
+% unit normal pointing from i to j and scalDist the center distance.  The
+% contact contributes
 %     [ H_ii  -H_ij ; -H_ij'  H_jj ]
 % to the (i, j) rows/columns of K, and likewise for Γ.  boolSlip marks a fully
 % mobilized contact, which loses its tangential spring when slipMobilized is on.
+
+    % Contact stiffnesses and normal force of the contact law.
+    if (consts.boolHertz)
+        % Hertz(-Mindlin), as in pack.m: f_n = (4/3) K sqrt(R_eff) delta^(3/2),
+        % k_n = 2 K sqrt(R_eff delta), k_t = (k_t0/K) k_n.
+        scalOverlap   = scalRadiusI + scalRadiusJ - scalDist;
+        scalRadiusEff = scalRadiusI*scalRadiusJ/(scalRadiusI + scalRadiusJ);
+        scalKn = 2*consts.kn*sqrt(scalRadiusEff*scalOverlap);
+        scalFn = (4/3)*consts.kn*sqrt(scalRadiusEff)*scalOverlap^(3/2);
+        scalKt = consts.scalKtOverKn*scalKn;
+    else
+        scalKn = consts.kn;
+        scalFn = consts.kn*(scalRadiusI + scalRadiusJ - scalDist);
+        scalKt = consts.kt;
+    end
+
     if (consts.friction)
         % Projection vectors on (x, y, theta).  t = z x n, and the third
         % entries are the lever arms that turn sliding into spin.
         n  = [nhat ; 0];
-        ti = [-nhat(2) ; nhat(1) ;  Ri];
-        tj = [-nhat(2) ; nhat(1) ; -Rj];
+        ti = [-nhat(2) ; nhat(1) ;  scalRadiusI];
+        tj = [-nhat(2) ; nhat(1) ; -scalRadiusJ];
         nn = n*n.';
 
-        kt = consts.kt;
-        if (consts.slipMobilized && boolSlip)
-            kt = 0; % slipping contact: no tangential spring (Henkes et al.)
+        if (consts.boolSlipMobilized && boolSlip)
+            scalKt = 0; % slipping contact: no tangential spring (Henkes et al.)
         end
 
-        Hii = consts.kn*nn + kt*(ti*ti.');
-        Hjj = consts.kn*nn + kt*(tj*tj.');
-        Hij = consts.kn*nn + kt*(ti*tj.');
+        Hii = scalKn*nn + scalKt*(ti*ti.');
+        Hjj = scalKn*nn + scalKt*(tj*tj.');
+        Hij = scalKn*nn + scalKt*(ti*tj.');
 
         Gii = consts.gn*nn + consts.gt*(ti*ti.');
         Gjj = consts.gn*nn + consts.gt*(tj*tj.');
         Gij = consts.gn*nn + consts.gt*(ti*tj.');
     else
-        Hii = consts.kn*(nhat*nhat.');
+        Hii = scalKn*(nhat*nhat.');
         Hjj = Hii;
         Hij = Hii;
 
@@ -463,23 +501,22 @@ function [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, Ri, Rj, r, dim, co
         Gij = Gii;
     end
 
-    if (consts.stressed)
-        % Pre-stress term V'(r)/r (I - n n') with V'(r) = -f_n, the Hookean
-        % normal force.  It only involves the translational DOFs.
-        fn = consts.kn*(Ri + Rj - r);
-        S = -(fn/r)*(eye(dim) - nhat*nhat.');
+    if (consts.boolStressed)
+        % Pre-stress term V'(r)/r (I - n n') with V'(r) = -f_n, the normal force
+        % of the contact law.  It only involves the translational DOFs.
+        matPreStress = -(scalFn/scalDist)*(eye(dim) - nhat*nhat.');
         if (consts.friction)
-            S = blkdiag(S, 0);
+            matPreStress = blkdiag(matPreStress, 0);
         end
-        Hii = Hii + S;
-        Hjj = Hjj + S;
-        Hij = Hij + S;
+        Hii = Hii + matPreStress;
+        Hjj = Hjj + matPreStress;
+        Hij = Hij + matPreStress;
     end
 end
 
 function [boolSlip, boolKnown] = lookupContact(i, j, consts)
 % Is contact (i, j) fully mobilized, and is it listed in fricState at all?
-    if (~consts.useFricState)
+    if (~consts.boolUseFricState)
         boolSlip  = false;
         boolKnown = false;
         return;
@@ -490,7 +527,7 @@ function [boolSlip, boolKnown] = lookupContact(i, j, consts)
     boolSlip  = full(consts.matMobilized(a, b));
 end
 
-function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(fricState, N, radii, tol)
+function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(fricState, N, radii, scalTol)
 % Sparse N x N logical maps (upper triangle, i < j) of the contacts listed in
 % pack.m's fricState and of the fully mobilized ones, m = |f_t|/(mu f_n) >= 1 - tol.
     if ((fricState.N ~= N) || (max(abs(fricState.vecRadius(:) - radii)) > 1e-12*max(radii)))
@@ -504,9 +541,9 @@ function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(fri
     else
         vecMobilization = ones(numel(vecI), 1); % mu = 0: no contact can hold a tangential force
     end
-    boolMobilized  = vecMobilization >= 1 - tol;
+    vecBoolMobilized = vecMobilization >= 1 - scalTol;
     matInFricState = sparse(vecI, vecJ, true, N, N);
-    matMobilized   = sparse(vecI(boolMobilized), vecJ(boolMobilized), true, N, N);
+    matMobilized   = sparse(vecI(vecBoolMobilized), vecJ(vecBoolMobilized), true, N, N);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
