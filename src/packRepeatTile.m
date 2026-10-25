@@ -1,4 +1,4 @@
-function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, calc_eig, strInPath, strSavePath, scalZMult, boolHertzian)
+function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, boolCalcEig, strInPath, strSavePath, scalZMult, boolHertzian)
     % packRepeatTile  Load a saved 2D or 3D packing and tile it in x, y, and/or z.
     %
     % N,              Number of particles in the base tile
@@ -8,7 +8,9 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     % seed,           RNG seed used in the base tile filename
     % scalXMult,      Number of times to tile in x
     % scalYMult,      Number of times to tile in y
-    % calc_eig,       Boolean: compute and save eigenmodes (2D only)
+    % boolCalcEig,    REMOVED: must be false (the eigenmode path called hess2d,
+    %                 which does not exist in GranE); the slot is kept so
+    %                 positional calls keep working
     % strInPath,      Path to the base tile .mat file
     % strSavePath,    Path to save the tiled output .mat file
     % scalZMult,      (optional, default 0) Number of times to tile in z;
@@ -37,10 +39,14 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     if nargin < 12 || isempty(boolHertzian)
         boolHertzian = false;
     end
+    if boolCalcEig
+        error('packRepeatTile:CalcEigRemoved', ...
+            'boolCalcEig = true is no longer supported; build the matrices with matSpringDampMass and use calcEigenFrequencies.');
+    end
 
     if scalZMult ~= 0
         packRepeatTile3D(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, scalZMult, ...
-            calc_eig, strInPath, strSavePath, boolHertzian);
+            strInPath, strSavePath, boolHertzian);
         return
     end
 
@@ -77,74 +83,44 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     strFilenameOut = sprintf('%s2D_N%d_P%s_Width%d_Seed%d%s.mat', ...
         strSavePath, scalNFinal, num2str(P_target), scalWidthFactorFinal, seed, strFileSuffix);
 
-    if calc_eig
-        % Eigen path: remove rattlers first, then build the Hessian on the
-        % backbone (pack.m does the same before saving eigenmodes).
-        matPositions = [vecPosXFinal, vecPosYFinal];              % [scalNFinal x 2]
-        vecRadii     = vecDiameterFinal ./ 2;                     % [scalNFinal x 1]
-        N_original   = scalNFinal;                                % before cleanRats
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);
-        vecPosX        = matPositions(:,1);
-        vecPosY        = matPositions(:,2);
-        vecDiameter    = vecRadii .* 2;
-        N              = size(matPositions, 1);
-        matHessian = hess2d(matPositions, vecRadii, K, scalBoxHeightYFinal, scalBoxWidthXTiled);  % [2*N x 2*N]
-        [matEigenVectors, matEigenValues] = eig(matHessian);
+    % Standardize variable names to match pack.m output
+    vecPosX        = vecPosXFinal;
+    vecPosY        = vecPosYFinal;
+    vecDiameter    = vecDiameterFinal;
+    scalBoxWidthX  = scalBoxWidthXTiled;
+    scalBoxHeightY = scalBoxHeightYFinal;
+    N              = scalNFinal;
+    N_original     = N;  % no rattler removal in tiling
 
-        % Recompute the saved metrics on the backbone, exactly like pack.m
-        % (shared functions: single source of truth for the definitions)
-        scalBoxWidthX  = scalBoxWidthXTiled;
-        scalBoxHeightY = scalBoxHeightYFinal;
-        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
-        scalPackingFractionFull = scalPackingFraction;  % same for tiling
-        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
-        fprintf('Tiled backbone: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
-            N, scalPackingFraction, scalMeanCoordNum);
+    % Packing fraction of the tiled packing, via the shared function
+    % (identical to the base tile by construction: tiling scales box
+    % area and disk area by the same factor)
+    scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
+    scalPackingFractionFull = scalPackingFraction;  % same for tiling
 
-        save(strFilenameOut, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-            'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
-            'scalMeanCoordNum', 'matEigenVectors', 'matEigenValues');
-    else
-        % Standardize variable names to match pack.m output
-        vecPosX        = vecPosXFinal;
-        vecPosY        = vecPosYFinal;
-        vecDiameter    = vecDiameterFinal;
-        scalBoxWidthX  = scalBoxWidthXTiled;
-        scalBoxHeightY = scalBoxHeightYFinal;
-        N              = scalNFinal;
-        N_original     = N;  % no rattler removal in tiling
+    % Coordination number recomputed on the tiled packing under full PBC
+    % via the shared function (same definition as pack.m). Tiling
+    % replicates the base contact network, so for a periodic base
+    % packing this equals the base tile's scalMeanCoordNum.
+    scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
+    fprintf('Tiled packing: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
+        N, scalPackingFraction, scalMeanCoordNum);
 
-        % Packing fraction of the tiled packing, via the shared function
-        % (identical to the base tile by construction: tiling scales box
-        % area and disk area by the same factor)
-        scalPackingFraction = computePackingFraction(vecDiameter, scalBoxWidthX, scalBoxHeightY);
-        scalPackingFractionFull = scalPackingFraction;  % same for tiling
-
-        % Coordination number recomputed on the tiled packing under full PBC
-        % via the shared function (same definition as pack.m). Tiling
-        % replicates the base contact network, so for a periodic base
-        % packing this equals the base tile's scalMeanCoordNum.
-        scalMeanCoordNum = computeMeanCoordNum(vecPosX, vecPosY, vecDiameter, scalBoxWidthX, scalBoxHeightY);
-        fprintf('Tiled packing: N=%d, PF=%.4f, mean coordination number=%.4f\n', ...
-            N, scalPackingFraction, scalMeanCoordNum);
-
-        % Friction flags: default if not loaded from the base tile
-        if ~exist('boolFrictionOn','var')
-            boolFrictionOn = false;
-        end
-        if ~exist('scalMu','var')
-            scalMu = 0.0;
-        end
-        if ~exist('scalKt','var')
-            scalKt = 0.0;
-        end
-
-        save(strFilenameOut, 'vecPosX', 'vecPosY', 'vecDiameter', ...
-            'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
-            'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
-            'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
+    % Friction flags: default if not loaded from the base tile
+    if ~exist('boolFrictionOn','var')
+        boolFrictionOn = false;
     end
+    if ~exist('scalMu','var')
+        scalMu = 0.0;
+    end
+    if ~exist('scalKt','var')
+        scalKt = 0.0;
+    end
+
+    save(strFilenameOut, 'vecPosX', 'vecPosY', 'vecDiameter', ...
+        'scalBoxWidthX', 'scalBoxHeightY', 'K', 'P_target', 'scalPressure', ...
+        'N', 'N_original', 'scalPackingFraction', 'scalPackingFractionFull', ...
+        'scalMeanCoordNum', 'boolFrictionOn', 'scalMu', 'scalKt');
         %% Plot tiled packing
         figure;
         hold on;
@@ -190,7 +166,7 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
 end
 
 function packRepeatTile3D(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYMult, scalZMult, ...
-        calc_eig, strInPath, strSavePath, boolHertzian)
+        strInPath, strSavePath, boolHertzian)
     % packRepeatTile3D  3D branch of packRepeatTile: tile the full
     % (pre-cleanRats) 3D tile source in x, y, and z and save the superlattice.
 
@@ -198,9 +174,6 @@ function packRepeatTile3D(N, K, P_target, scalWidthFactor, seed, scalXMult, scal
         error('packRepeatTile:BadMult', ...
             'packRepeatTile: 3D multipliers must be >= 1 (got x=%g, y=%g, z=%g).', ...
             scalXMult, scalYMult, scalZMult);
-    end
-    if calc_eig
-        warning('calc_eig not supported for 3D yet — saving positions only.');
     end
     if boolHertzian
         strSuffix = '_Hertz';

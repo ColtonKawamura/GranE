@@ -18,7 +18,8 @@ def generate_matlab_command(
     (3D_N<N>_P<P>_Width<W>_Seed<s>[_Hertz].mat); packRepeatTile3D loads it and
     saves the superlattice under the normal packing name.
 
-    calc_eig_str must be a MATLAB boolean ("true"/"false"); strInPath and
+    calc_eig must be False: packRepeatTile's eigenmode path was removed and
+    errors when its 8th argument is true. strInPath and
     strSavePath are the directory of the base tile / the save location.
     """
     plotit_str   = "false"  # packRepeatTile always opens a figure for the
