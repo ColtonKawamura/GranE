@@ -14,7 +14,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         scalXMult          (1,1) double = 1                                       % repeat-tile multiplier in x
         scalYMult          (1,1) double = 1                                       % repeat-tile multiplier in y
         scalZMult          (1,1) double = 0                                       % repeat-tile multiplier in z; ~= 0 selects 3D
-        boolCalcEig        (1,1) logical = false                                  % also save Hessian eigenmodes (2D only)
+        boolCalcEig        (1,1) logical = false                                  % REMOVED: must be false (slot kept so positional calls still work)
         strSavePath        (1,1) string = "./junkyard"                            % prefix of every saved file, e.g. "data/"
         % sOptions is passed as a plain positional struct (the frictional test
         % calls pack(...,strSavePath,opts)). A fully-defaulted struct means the
@@ -76,6 +76,16 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         error('pack:Friction3DNotSupported', 'flagFrictionOn = true is 2D only.');
     end
 
+
+    %% Guard: the calc_eig path was removed. It called hess2d, which does not
+    %% exist in GranE, and passed cleanRats its arguments in the wrong order.
+    %% Eigenmodes come from matSpringDampMass + calcEigenFrequencies instead.
+    %% The positional slot stays so existing calls (..., false, strSavePath)
+    %% keep working.
+    if boolCalcEig
+        error('pack:CalcEigRemoved', ...
+            'boolCalcEig = true is no longer supported; build the matrices with matSpringDampMass and use calcEigenFrequencies.');
+    end
 
     %% Guard: tiling a frictional packing would drop its contact forces.
     %% packRepeatTile copies positions only, so a tiled "_Friction" file
@@ -1518,19 +1528,6 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     end
     fprintf('Packing fraction after cleanRats: %.4f\n', scalPackingFraction);
 
-    if boolCalcEig
-        % 3D hessian not yet implemented — skip eigenmodes
-        if boolThreeD
-            warning('calc_eig not supported for 3D yet — saving positions only.');
-        else
-            matPositions = [vecPosX, vecPosY];
-            vecRadii = vecDiameter ./ 2;
-            [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalSpringConstant, scalBoxHeightY, scalBoxWidthX);
-            matHessian = hess2d(matPositions, vecRadii, scalSpringConstant, scalBoxHeightY, scalBoxWidthX);
-            [matEigenVectors, matEigenValues] = eig(matHessian);
-        end
-    end
-
     % Backbone .mat: the stored variable names (K, P_target, N, N_original,
     % ...) are the file format that simMD, packRepeatTile and the tests
     % load, so they are kept as the field names of the struct that
@@ -1556,10 +1553,6 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     sPackingFile.scalPackingFraction     = scalPackingFraction;
     sPackingFile.scalPackingFractionFull = scalPackingFractionFull;
     sPackingFile.scalMeanCoordNum        = scalMeanCoordNum;
-    if boolCalcEig && ~boolThreeD
-        sPackingFile.matEigenVectors = matEigenVectors;
-        sPackingFile.matEigenValues  = matEigenValues;
-    end
     if boolHertzian
         sPackingFile.vecHertzNN   = vecHertzNN;
         sPackingFile.vecHertzMM   = vecHertzMM;
@@ -1593,12 +1586,12 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     if boolThreeD
         if scalXMult ~= 1 || scalYMult ~= 1 || scalZMult ~= 1
             packRepeatTile(scalNumParticles, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
-                boolCalcEig, strSavePath, strSavePath, scalZMult, boolHertzian);
+                false, strSavePath, strSavePath, scalZMult, boolHertzian);
         end
     else
         if scalXMult ~= 1 || scalYMult ~= 1
             packRepeatTile(scalNumParticlesOriginal, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
-                boolCalcEig, strSavePath, strSavePath, 0, boolHertzian);
+                false, strSavePath, strSavePath, 0, boolHertzian);
             disp("Tile saved to: " + strFilename);
         end
     end
