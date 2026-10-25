@@ -181,7 +181,11 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     %% steps with the box held and a percolating contact network
     %% (mean Zn >= scalFrictionZmin), as OverDamp.cpp's Acc_max < Fthresh.
     scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
-    scalFrictionForceTol     = 0.01;        % accept when max|F_net|/mean|F_contact| < 1%
+    scalFrictionForceTol     = 1e-4;        % accept when max|F_net|/mean|F_contact| < 1e-4.
+                                             % Must sit well below the weakest contact force we
+                                             % count: at 1e-2 the residual exceeded Shundyak's
+                                             % 1e-3*<f> contact cut, so contacts weaker than ~1%
+                                             % of the mean force were inside the equilibration noise
     scalFrictionBalCount      = 0;          % consecutive in-band steps satisfying force balance
     scalFrictionBalWindow     = 300;        % sustained force-balance steps to accept
     scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
