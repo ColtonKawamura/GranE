@@ -54,9 +54,9 @@ for idxMu = 1:numel(vecMu)
     close all;
 
     strStem = fullfile(strSub, sprintf('2D_N%d_P%s_Width%d_Seed%d', scalN, num2str(scalP), round(sqrt(scalN)), scalSeed));
-    sFull = load([strStem '_Full.mat']);             % all particles, before cleanRats
-    sFric = load([strStem '_FricState.mat']);        % per-contact forces, same indexing
-    fs = sFric.fricState;
+    sPackFile = load([strStem '_Friction.mat']);     % pack.m's one output file
+    sFull = sPackFile.sFullState;                    % all particles, before cleanRats
+    fs = sFull.fricState;                            % per-contact forces, same indexing
     vecR = sFull.vecDiameter/2;
     vecBox = [sFull.scalBoxWidthX, sFull.scalBoxHeightY];
     matPos = [sFull.vecPosX, sFull.vecPosY];
