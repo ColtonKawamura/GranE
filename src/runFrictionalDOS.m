@@ -10,12 +10,14 @@ function runFrictionalDOS(strContactLaw, options)
 %
 %   1. pack.m makes a frictional packing for every (mu, P, seed) of the grid
 %      (Hookean + Cundall-Strack contacts for "hooke"; Hertzian normal force +
-%      Mindlin tangential stiffness for "hertz"). Existing packings are reused
-%      (pack.m skips a packing whose .mat exists), so an interrupted run
-%      resumes where it stopped.
-%   2. Rattlers are removed (particles with fewer than 2 contacts, repeated
-%      until none are left) and the pack.m contact forces (fricState) are
-%      re-indexed to the backbone.
+%      Mindlin tangential stiffness for "hertz") and saves ONE file,
+%      2D_N<N>_P<P>_Width<W>_Seed<s>_Friction.mat ("hertz": ..._Hertz_Friction.mat).
+%      Existing packings are reused (pack.m skips a packing whose .mat
+%      exists), so an interrupted run resumes where it stopped.
+%   2. That file already holds the backbone (rattlers, particles with fewer
+%      than 2 contacts, removed repeatedly by cleanRats), the pack.m contact
+%      forces re-indexed to the backbone (fricState) and the full
+%      pre-cleanRats state (sFullState, for the rattlers-included numbers).
 %   3. matSpringDampMass builds the stiffness matrix of Henkes et al. eq. (2)
 %      (pre-stress term on) in four versions:
 %         stick        every contact keeps k_t ("non-slipping", Somfai et al.)
@@ -96,23 +98,20 @@ function runFrictionalDOS(strContactLaw, options)
         end
         sPackOptions = struct('flagFrictionOn', true, 'scalFricCoef', scalMu, ...
             'scalTangentialK', options.scalKtOverK, 'scalGammaNormal', 0, 'scalGammaTangential', 0, ...
-            'saveFrictionalState', true, 'saveFullState', true, ...
             'hertzian', strContactLaw == "hertz", 'hertzMindlin', strContactLaw == "hertz");
         pack(options.scalN, options.scalK, 1, 1.4, 1, scalP, scalSeed, false, 1, 1, 0, false, ...
             string([char(strPackDir) filesep]), sPackOptions);
         close all;
-        strStem = fullfile(strPackDir, sprintf('2D_N%d_P%s_Width%d_Seed%d', options.scalN, num2str(scalP), ...
-            round(sqrt(options.scalN)), scalSeed));
+        strFileSuffix = '_Friction';
         if strContactLaw == "hertz"
-            sFull = load([char(strStem) '_Full_HertzMindlin.mat']);
-            sFric = load([char(strStem) '_HertzMindlin_FricState.mat']);
-        else
-            sFull = load([char(strStem) '_Full.mat']);
-            sFric = load([char(strStem) '_FricState.mat']);
+            strFileSuffix = '_Hertz_Friction';
         end
+        strPackingFile = fullfile(strPackDir, sprintf('2D_N%d_P%s_Width%d_Seed%d%s.mat', options.scalN, num2str(scalP), ...
+            round(sqrt(options.scalN)), scalSeed, strFileSuffix));
+        sPackingFile = load(strPackingFile);
 
-        % 2) backbone and re-indexed contact forces
-        [sPacking, sFricBackbone, sStats] = frictionalBackbone(sFull, sFric.fricState, scalMu, options.scalMobTol);
+        % 2) backbone, its re-indexed contact forces and the statistics
+        [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, scalMu, options.scalMobTol);
 
         % 3) the four stiffness matrices (pre-stress on, Γ = 0)
         cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
@@ -152,54 +151,32 @@ function runFrictionalDOS(strContactLaw, options)
     fprintf('[runFrictionalDOS] %s done: %d packings in %s\n', strContactLaw, numel(sRuns), strSpectraFile);
 end
 
-function [sPacking, sFricBackbone, sStats] = frictionalBackbone(sFull, sFricState, scalMu, scalMobTol)
-% Remove rattlers (fewer than 2 contacts, repeated) from the pre-cleanRats
-% state and re-index pack.m's per-contact forces to the surviving particles.
+function [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, scalMu, scalMobTol)
+% Backbone geometry and contact forces from pack.m's one frictional file
+% (rattlers already removed by cleanRats and fricState already re-indexed
+% onto the backbone by pack.m), plus the packing statistics. The full
+% pre-cleanRats state (sFullState) gives the rattlers-included numbers.
+    sFull = sPackingFile.sFullState;           % pre-cleanRats state (all particles)
     scalN = numel(sFull.vecPosX);
-    vecI = sFricState.vecContactNN(:);
-    vecJ = sFricState.vecContactMM(:);
-    vecRadius = sFull.vecDiameter(:)/2;
-    vecBoolKeep = true(scalN, 1);
-    while true
-        vecBoolLive = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
-        vecZi = accumarray([vecI(vecBoolLive); vecJ(vecBoolLive)], 1, [scalN 1]);
-        vecBoolDrop = vecBoolKeep & vecZi < 2;
-        if ~any(vecBoolDrop)
-            break;
-        end
-        vecBoolKeep(vecBoolDrop) = false;
-    end
-    vecBoolLive = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
-    vecNewIndex = zeros(scalN, 1);
-    vecNewIndex(vecBoolKeep) = 1:sum(vecBoolKeep);
+    vecRadius = sFull.vecDiameter(:)/2;        % [N x 1] all particles, rattlers included
 
-    sPacking = struct('vecPosX', sFull.vecPosX(vecBoolKeep), 'vecPosY', sFull.vecPosY(vecBoolKeep), ...
-        'scalBoxWidthX', sFull.scalBoxWidthX, 'scalBoxHeightY', sFull.scalBoxHeightY, ...
-        'vecDiameter', sFull.vecDiameter(vecBoolKeep));
-    sFricBackbone = sFricState;
-    sFricBackbone.N = sum(vecBoolKeep);
-    sFricBackbone.vecRadius = vecRadius(vecBoolKeep);
-    sFricBackbone.vecContactNN = vecNewIndex(vecI(vecBoolLive));
-    sFricBackbone.vecContactMM = vecNewIndex(vecJ(vecBoolLive));
-    sFricBackbone.vecFn = sFricState.vecFn(vecBoolLive);
-    sFricBackbone.vecFt = sFricState.vecFt(vecBoolLive);
-    sFricBackbone.vecOverlap = sFricState.vecOverlap(vecBoolLive);
-    sFricBackbone.vecUnitTanX = sFricState.vecUnitTanX(vecBoolLive);
-    sFricBackbone.vecUnitTanY = sFricState.vecUnitTanY(vecBoolLive);
-    if isfield(sFricBackbone, 'matDispTan')
-        sFricBackbone = rmfield(sFricBackbone, 'matDispTan');   % N x N, not needed downstream
-    end
+    sPacking = struct('vecPosX', sPackingFile.vecPosX(:), 'vecPosY', sPackingFile.vecPosY(:), ...
+        'scalBoxWidthX', sPackingFile.scalBoxWidthX, 'scalBoxHeightY', sPackingFile.scalBoxHeightY, ...
+        'vecDiameter', sPackingFile.vecDiameter(:));
+    sFricBackbone = sPackingFile.fricState;    % backbone numbering, no matDispTan
+    sFricState = sFricBackbone;                % material constants (K, strContactLaw) for the stats below
 
     % Statistics of the backbone (2D).
     vecFn = abs(sFricBackbone.vecFn);
     vecOverlap = sFricBackbone.vecOverlap;
-    vecRi = vecRadius(vecI(vecBoolLive));
-    vecRj = vecRadius(vecJ(vecBoolLive));
+    vecRadiusBackbone = sPacking.vecDiameter/2;
+    vecRi = vecRadiusBackbone(sFricBackbone.vecContactNN);
+    vecRj = vecRadiusBackbone(sFricBackbone.vecContactMM);
     vecDist = vecRi + vecRj - vecOverlap;
     vecMob = abs(sFricBackbone.vecFt)./(scalMu*vecFn);
     sStats = struct();
     sStats.scalN = scalN;
-    sStats.scalNi = sum(vecBoolKeep);
+    sStats.scalNi = numel(sPacking.vecPosX);
     sStats.scalNc = numel(vecFn);
     sStats.scalNmContacts = sum(vecMob >= 1 - scalMobTol);
     sStats.scalZ = 2*sStats.scalNc/sStats.scalNi;

@@ -13,15 +13,18 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     % strSavePath,    Path to save the tiled output .mat file
     % scalZMult,      (optional, default 0) Number of times to tile in z;
     %                 ~= 0 selects 3D (same convention as pack.m)
-    % boolHertzian,   (optional, default false) 3D only: base tile and
-    %                 output use the '_Hertz' filename suffix
+    % boolHertzian,   (optional, default false) base tile and output use the
+    %                 '_Hertz' filename suffix (pack.m's naming)
     %
-    % 2D: loads the backbone 2D_N<N>_P<P>_Width<W>_Seed<s>.mat and saves
-    %     2D_N<Ntiled>_P<P>_Width<W*scalYMult>_Seed<s>.mat.
-    % 3D: loads the FULL (pre-cleanRats, rattlers included) tile source
-    %     3D_N<N>_P<P>_Width<W>_Seed<s>_Full[_Hertz].mat that pack.m writes
-    %     when options.saveFullState = true, and saves the superlattice under
-    %     the normal packing name 3D_N<Ntiled>_P<P>_Width<W>_Seed<s>[_Hertz].mat
+    % pack.m writes ONE file per packing, <name>[_Hertz].mat, holding the
+    % backbone and, in the struct sFullState, the full pre-cleanRats state.
+    % Frictional packings (_Friction) are never tiled (pack.m refuses).
+    % 2D: loads the backbone 2D_N<N>_P<P>_Width<W>_Seed<s>[_Hertz].mat and saves
+    %     2D_N<Ntiled>_P<P>_Width<W*scalYMult>_Seed<s>[_Hertz].mat.
+    % 3D: loads the FULL (pre-cleanRats, rattlers included) tile source,
+    %     sFullState of 3D_N<N>_P<P>_Width<W>_Seed<s>[_Hertz].mat, and saves
+    %     the superlattice under the normal packing name
+    %     3D_N<Ntiled>_P<P>_Width<W>_Seed<s>[_Hertz].mat
     %     (multipliers stored inside the file as x_mult, y_mult, z_mult).
     %
     % Example:
@@ -42,7 +45,12 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     end
 
     %% Load base tile
-    strBaseName   = sprintf('2D_N%d_P%s_Width%d_Seed%d', N, num2str(P_target), scalWidthFactor, seed);
+    if boolHertzian
+        strFileSuffix = '_Hertz';
+    else
+        strFileSuffix = '';
+    end
+    strBaseName   = sprintf('2D_N%d_P%s_Width%d_Seed%d%s', N, num2str(P_target), scalWidthFactor, seed, strFileSuffix);
     strFilenameIn = strInPath + strBaseName + ".mat";
 
     fprintf('Loading file: %s\n', strFilenameIn);
@@ -66,8 +74,8 @@ function packRepeatTile(N, K, P_target, scalWidthFactor, seed, scalXMult, scalYM
     scalMass             = 1;
 
     %% Save
-    strFilenameOut = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-        strSavePath, scalNFinal, num2str(P_target), scalWidthFactorFinal, seed);
+    strFilenameOut = sprintf('%s2D_N%d_P%s_Width%d_Seed%d%s.mat', ...
+        strSavePath, scalNFinal, num2str(P_target), scalWidthFactorFinal, seed, strFileSuffix);
 
     if calc_eig
         % Eigen path: remove rattlers first, then build the Hessian on the
@@ -200,16 +208,22 @@ function packRepeatTile3D(N, K, P_target, scalWidthFactor, seed, scalXMult, scal
         strSuffix = '';
     end
 
-    %% Load the full-state base tile (rattlers included)
-    strFilenameIn = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Full%s.mat', ...
+    %% Load the full-state base tile (rattlers included): sFullState of
+    %% pack.m's one output file
+    strFilenameIn = sprintf('%s3D_N%d_P%s_Width%d_Seed%d%s.mat', ...
         strInPath, N, num2str(P_target), scalWidthFactor, seed, strSuffix);
     fprintf('Loading file: %s\n', strFilenameIn);
     if ~isfile(strFilenameIn)
         error('packRepeatTile:MissingFullState', ...
-            ['3D repeat-tile requires the full (pre-cleanRats) tile source %s. ', ...
-             'Run pack(..., options) with options.saveFullState = true.'], strFilenameIn);
+            '3D repeat-tile needs the base packing %s written by pack.m.', strFilenameIn);
     end
-    sBase = load(strFilenameIn);
+    sBaseFile = load(strFilenameIn);
+    if ~isfield(sBaseFile, 'sFullState')
+        error('packRepeatTile:MissingFullState', ...
+            ['%s has no sFullState (the full pre-cleanRats state). It was made by an ', ...
+             'older pack.m; re-run pack.m to regenerate it.'], strFilenameIn);
+    end
+    sBase = sBaseFile.sFullState;
     scalNTileSrc = numel(sBase.vecPosX);   % full per-tile particle count
 
     %% Tile in x, y, and z
@@ -248,13 +262,13 @@ function packRepeatTile3D(N, K, P_target, scalWidthFactor, seed, scalXMult, scal
     strFilenameOut = sprintf('%s3D_N%d_P%s_Width%d_Seed%d%s.mat', ...
         strSavePath, scalNTiled, num2str(P_target), scalWidthFactor, seed, strSuffix);
 
-    % Friction flags: default if not stored in the base tile
+    % Friction flags: default if not stored in the base file
     boolFrictionOn = false;
     scalMu = 0.0;
     scalKt = 0.0;
-    if isfield(sBase, 'boolFrictionOn'), boolFrictionOn = sBase.boolFrictionOn; end
-    if isfield(sBase, 'scalMu'),         scalMu = sBase.scalMu;                 end
-    if isfield(sBase, 'scalKt'),         scalKt = sBase.scalKt;                 end
+    if isfield(sBaseFile, 'boolFrictionOn'), boolFrictionOn = sBaseFile.boolFrictionOn; end
+    if isfield(sBaseFile, 'scalMu'),         scalMu = sBaseFile.scalMu;                 end
+    if isfield(sBaseFile, 'scalKt'),         scalKt = sBaseFile.scalKt;                 end
 
     % Stored variable names match the backbone .mat convention (vecPosX, N,
     % scalPackingFraction, ...) so downstream loaders are unchanged; save
