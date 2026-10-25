@@ -176,12 +176,13 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     %% P lands in the band instead of bouncing across it. The old controller
     %% resized by 0.5% every step while P was out of band; one such step moves
     %% P by several P_target, which is the limit cycle of issue #16.
-    %%  Convergence (unchanged) requires FORCE BALANCE — max_i |F_net,i| < tol *
-    %% mean contact force — sustained for several hundred consecutive in-band
+    %%  Convergence requires FORCE AND TORQUE BALANCE — max_i |F_net,i| < tol *
+    %% <|f_n|> and max_i |tau_net,i| < tol * <|f_n|> * <R> — sustained for several hundred consecutive in-band
     %% steps with the box held and a percolating contact network
     %% (mean Zn >= scalFrictionZmin), as OverDamp.cpp's Acc_max < Fthresh.
     scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
-    scalFrictionForceTol     = 1e-4;        % accept when max|F_net|/mean|F_contact| < 1e-4.
+    scalFrictionForceTol     = 1e-4;        % accept when max|F_net| < tol*<|f_n|> AND
+                                             % max|tau_net| < tol*<|f_n|>*<R> on every grain.
                                              % Must sit well below the weakest contact force we
                                              % count: at 1e-2 the residual exceeded Shundyak's
                                              % 1e-3*<f> contact cut, so contacts weaker than ~1%
@@ -673,6 +674,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
               %% =============================
         if boolFrictionOn && ~boolThreeD
             vecTorque  = zeros(scalNumParticles, 1);
+            vecTorqueContact = zeros(scalNumParticles, 1);   % net contact torque (no damping), for the torque-balance check
         end
 
         if boolFrictionOn && ~boolThreeD && scalNumContacts > 0
@@ -771,6 +773,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             % 2*F_t*(r_i*omega_i + r_j*omega_j) and spins the grains up.
             vecTorque = -(accumarray(vecContactNN, vecRi .* vecFtMag, [scalNumParticles 1]) + ...
                           accumarray(vecContactMM, vecRj .* vecFtMag, [scalNumParticles 1]));
+            vecTorqueContact = vecTorque;   % kept before the rotational damping below modifies vecTorque
 
             % Persist updated tangential displacement
             matDispTan(vecLinIdx) = vecDispTan;   % write per-contact displacement back to the [N x N] matrix
@@ -956,10 +959,15 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
               % This matches OverDamp.cpp's Acc_max < Fthresh and the DEM
               % relaxation stopping criteria in the jamming literature.
 
-              % Force-balance measure: net contact force (normal + tangential)
-              % on each grain. A jammed, settled packing has ~zero net force on
-              % every grain (mechanical equilibrium under PBC). Normalized by
-              % the mean contact force so the threshold is scale-free.
+              % Mechanical-equilibrium measure: net contact force (normal +
+              % tangential) AND net contact torque on each grain. A jammed,
+              % settled frictional packing has ~zero of both on every grain
+              % (force balance alone leaves the tangential forces, and so the
+              % mobilizations, unconverged). Both are normalized by the mean
+              % NORMAL contact force <|f_n|> (torque by <|f_n|><R>), the force
+              % scale Shundyak et al.'s 1e-3<f> contact cut refers to, so the
+              % tolerance reads directly as a fraction of <f_n>. (The old scale
+              % mean([|f_n|; |f_t|]) ~ 0.57 <f_n> depended on mu and mobilization.)
               if scalNumContacts > 0
                   vecNetFx = accumarray(vecContactNN, vecForceContactX, [scalNumParticles 1]) ...
                            - accumarray(vecContactMM, vecForceContactX, [scalNumParticles 1]) ...
@@ -969,12 +977,17 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
                            - accumarray(vecContactMM, vecForceContactY, [scalNumParticles 1]) ...
                            + accumarray(vecContactNN, vecFtY, [scalNumParticles 1]) ...
                            - accumarray(vecContactMM, vecFtY, [scalNumParticles 1]);
-                  vecFnetMag     = sqrt(vecNetFx.^2 + vecNetFy.^2);
-                  scalMaxFnet    = max(vecFnetMag);
-                  scalMeanFc     = mean([abs(vecForceMag); abs(vecFtMag)]);
-                  scalForceRatio = scalMaxFnet / max(scalMeanFc, eps);
+                  vecFnetMag      = sqrt(vecNetFx.^2 + vecNetFy.^2);
+                  scalMaxFnet     = max(vecFnetMag);
+                  scalMeanFn      = mean(abs(vecForceMag));                 % <|f_n|> over active contacts
+                  scalMeanRadius  = mean(vecDiameter) / 2;                  % <R> over all grains
+                  scalForceRatio  = scalMaxFnet / max(scalMeanFn, eps);
+                  scalTorqueRatio = max(abs(vecTorqueContact)) / max(scalMeanFn * scalMeanRadius, eps);
+                  scalBalanceRatio = max(scalForceRatio, scalTorqueRatio);
               else
-                  scalForceRatio = inf;   % no contacts: not balanced, not percolating
+                  scalForceRatio   = inf;   % no contacts: not balanced, not percolating
+                  scalTorqueRatio  = inf;
+                  scalBalanceRatio = inf;
               end
 
               % Relax-then-resize box controller. While P < P_target/50 there
@@ -988,7 +1001,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
               % means P_target was overshot, so the strain step is halved
               % (bisection on the box size) down to scalFrictionStrainMin.
               boolRelaxed = (idxStep - scalFrictionLastResize >= scalFrictionRelaxSteps) && ...
-                  (scalForceRatio < scalFrictionForceTol || ...
+                  (scalBalanceRatio < scalFrictionForceTol || ...
                    scalEk < scalFrictionRelaxKE * scalFrictionEpTarget);
               scalFrictionDir = 0;    % -1 compress, +1 expand, 0 hold
               if scalPressure < scalPressureFastGrow
@@ -1022,7 +1035,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
               % net force is trivially small simply because it carries no load.
               boolInBand   = abs(scalPressure - scalPressureTarget) / scalPressureTarget < scalFrictionDeadBand;
               boolPercol   = (scalMeanCoordNum >= scalFrictionZmin);
-              boolBalanced = (scalForceRatio < scalFrictionForceTol);
+              boolBalanced = (scalBalanceRatio < scalFrictionForceTol);   % force AND torque balance
               if boolInBand && boolPercol && boolBalanced && ~boolBoxMoved
                   scalFrictionBalCount = scalFrictionBalCount + 1;
               else
@@ -1030,16 +1043,16 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
               end
 
               if mod(idxStep, 5000) == 0
-                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/meanFc=%.3e | meanCoordNum=%.2f | balCount=%d\n', ...
-                      idxStep, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalMeanCoordNum, scalFrictionBalCount);
+                  fprintf('  [fric] step %d | P/Pt=%.3f | Lx=%.4f | maxFnet/<fn>=%.3e | maxTnet/(<fn><R>)=%.3e | meanCoordNum=%.2f | balCount=%d\n', ...
+                      idxStep, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalTorqueRatio, scalMeanCoordNum, scalFrictionBalCount);
               end
               if scalFrictionBalCount >= scalFrictionBalWindow
-                  fprintf('Frictional convergence (FORCE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalMeanCoordNum);
+                  fprintf('Frictional convergence (FORCE + TORQUE BALANCE) at step %d | P=%.4e (P/Pt=%.3f) Lx=%.4f maxFnet/<fn>=%.3e maxTnet/(<fn><R>)=%.3e meanCoordNum=%.2f\n', ...
+                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalTorqueRatio, scalMeanCoordNum);
                   break;
               elseif idxStep >= scalFrictionMaxSteps
-                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/meanFc=%.3e meanCoordNum=%.2f\n', ...
-                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalForceRatio, scalMeanCoordNum);
+                  fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/<fn>=%.3e maxTnet/(<fn><R>)=%.3e meanCoordNum=%.2f\n', ...
+                      idxStep, scalPressure, scalPressure / scalPressureTarget, scalForceRatio, scalTorqueRatio, scalMeanCoordNum);
                   break;
               end
         elseif boolFastCompressPhase
