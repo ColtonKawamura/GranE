@@ -19,15 +19,16 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         % sOptions is passed as a plain positional struct (the frictional test
         % calls pack(...,strSavePath,opts)). A fully-defaulted struct means the
         % frictionless 13-arg calls get all fields, and a caller may pass a
-        % partial struct; missing fields are backfilled below.
+        % partial struct; missing fields are backfilled below. The old
+        % 'saveFrictionalState' / 'saveFullState' fields are accepted but
+        % ignored: pack.m always writes ONE file that already contains the
+        % full pre-cleanRats state and (with friction) the contact forces.
         sOptions (1,1) struct = struct('hertzian', false, ...
             'flagFrictionOn', false, ...
             'scalFricCoef', 0.50, ...
             'scalTangentialK', 1/3, ...
             'scalGammaNormal', 0, ...
             'scalGammaTangential', 0, ...
-            'saveFrictionalState', false, ...
-            'saveFullState', true, ...
             'hertzMindlin', false)
     end
 
@@ -51,17 +52,10 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     if ~isfield(sOptions, 'scalGammaTangential')
         sOptions.scalGammaTangential = 0;
     end
-    if ~isfield(sOptions, 'saveFrictionalState')
-        sOptions.saveFrictionalState = false;
-    end
-    if ~isfield(sOptions, 'saveFullState')
-        sOptions.saveFullState = true;
-    end
     if ~isfield(sOptions, 'hertzMindlin')
         sOptions.hertzMindlin = false;
     end
     boolHertzian      = sOptions.hertzian;       % Hertzian (vs. linear) contact law
-    boolSaveFullState = sOptions.saveFullState;  % also save the pre-cleanRats tile source
     % Hertz-Mindlin friction: the tangential stiffness follows the Hertz
     % normal stiffness, k_t = (K_t/K) * k_n(delta) with k_n = 2 K sqrt(R_eff delta),
     % and the tangential force is updated incrementally, dF_t = -k_t(delta) dU
@@ -83,48 +77,37 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     end
 
 
+    %% Guard: tiling a frictional packing would drop its contact forces.
+    %% packRepeatTile copies positions only, so a tiled "_Friction" file
+    %% could not carry the reindexed fricState the frictional file promises.
+    if sOptions.flagFrictionOn && (scalXMult ~= 1 || scalYMult ~= 1)
+        error('pack:FrictionTileUnsupported', ...
+            'Repeat-tiling a frictional packing is not supported (the tile would lose the contact forces). Use scalXMult = scalYMult = 1.');
+    end
+
+    % ONE output file per packing. Its suffix records the contact law and
+    % friction: '' (Hooke), '_Hertz', '_Friction' (Hooke + friction) or
+    % '_Hertz_Friction' (Hertzian + friction, Cundall-Strack or Mindlin;
+    % the file stores boolHertzMindlin). The file holds the backbone
+    % (rattlers removed), the reindexed contact forces when friction is on,
+    % and the full pre-cleanRats state in sFullState (see the save block).
+    strFileSuffix = '';
+    if boolHertzian
+        strFileSuffix = [strFileSuffix '_Hertz'];
+    end
+    if sOptions.flagFrictionOn
+        strFileSuffix = [strFileSuffix '_Friction'];
+    end
+
     % Check if packing already exists — skip if so
     if boolThreeD
         scalRoundedWidth = round(scalNumParticles^(1/3));
-        if boolHertzian
-            strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        else
-            strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        end
-        % Full-state (pre-cleanRats) filename for the repeat-tile source file.
-        % A '_Full' tag keeps it distinct from the backbone .mat so re-running
-        % pack on the same parameters does not clobber the tile source.
-        if boolHertzian
-            strFullFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        else
-            strFullFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        end
+        strFilename = sprintf('%s3D_N%d_P%s_Width%d_Seed%d%s.mat', ...
+            strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed, strFileSuffix);
     else
         scalRoundedWidth = round(sqrt(scalNumParticles));
-        if boolHertzMindlin
-            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_HertzMindlin.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        elseif boolHertzian
-            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Hertz.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        else
-            strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        end
-        if boolHertzMindlin
-            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_HertzMindlin.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        elseif boolHertzian
-            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full_Hertz.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        else
-            strFullFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d_Full.mat', ...
-                strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed);
-        end
+        strFilename = sprintf('%s2D_N%d_P%s_Width%d_Seed%d%s.mat', ...
+            strSavePath, scalNumParticles, num2str(scalPressureTarget), scalRoundedWidth, scalSeed, strFileSuffix);
     end
     if isfile(strFilename)
         fprintf('Packing already exists, skipping: %s\n', strFilename);
@@ -242,14 +225,12 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             %%                        (Cundall-Strack reference: 1/3).
             %%   scalGammaNormal    = normal dashpot prefactor; 0 keeps original.
             %%   scalGammaTangential = tangential dashpot prefactor (optional).
-            %%   boolSaveFricState   = export fricState sidecar .mat before cleanRats.
     boolFrictionOn          = sOptions.flagFrictionOn;
     scalMu                  = sOptions.scalFricCoef;
     scalKtOverK             = sOptions.scalTangentialK;
     scalKt                  = scalSpringConstant * scalKtOverK;
     scalGammaNormal          = sOptions.scalGammaNormal;
     scalGammaTangential     = sOptions.scalGammaTangential;
-    boolSaveFricState       = sOptions.saveFrictionalState;
 
 
 
@@ -1127,11 +1108,13 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
              end
          end
     end
-               %% Build and save frictional state on ORIGINAL indices
-            %%   (BEFORE cleanRats renumbers)
-            %%  Downstream frictional linear-response pipeline uses
-            %%  fricState to assemble the full frictional Hessian.
-    if boolFrictionOn && boolSaveFricState
+               %% Build the frictional state on ORIGINAL indices
+            %%   (BEFORE cleanRats renumbers). It is stored twice in the one
+            %%   output file: as-is in sFullState.fricState (pre-cleanRats
+            %%   numbering) and reindexed onto the backbone as fricState
+            %%   (see reindexFricState after cleanRats). The frictional
+            %%   linear-response pipeline uses the backbone copy.
+    if boolFrictionOn
         sFricState = buildFricState( ...
             vecPosX, vecPosY, vecDiameter, ...
             scalBoxWidthX, scalBoxHeightY, ...
@@ -1141,10 +1124,6 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
             % Mindlin stores the force itself: read F_t from it, not -K_t*U.
             sFricState.vecFt = matForceTan(sFricState.vecContactNN + scalNumParticles * (sFricState.vecContactMM - 1));
         end
-        strFricFilename = [strFilename(1:end-4) '_FricState.mat'];
-        sFricStateFile.fricState = sFricState;   % stored in the .mat as 'fricState'
-        save(strFricFilename, '-struct', 'sFricStateFile');
-        fprintf('fricState saved to: %s\n', strFricFilename);
     end
 
     fprintf('Loop finished at step %d.\n', idxStep);
@@ -1160,38 +1139,32 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     scalNumParticlesOriginal = numel(vecPosX);  % particle count before cleanRats (for plot titles)
 
     %% Snapshot the FULL jammed state (all N particles, rattlers included)
-    %    BEFORE cleanRats, for tile-based repetition (see the tiling block at
-    %    the end of this file). The per-step box rescalings already wrap
-    %    positions into [0, L), so every coordinate is in-box; packRepeatTile
-    %    reproduces this state exactly across tile boundaries. Gated on
-    %    sOptions.saveFullState so default callers keep byte-identical output.
-    if boolSaveFullState
-        % The variable names stored in the .mat (K, P_target, N_original,
-        % seed, ...) are the file format that packRepeatTile and other
-        % loaders read, so they are kept as the field names of the struct
-        % that save -struct writes out (one variable per field; the field
-        % list is passed explicitly so Octave keeps this order too).
-        sFullStateFile = struct();
-        sFullStateFile.vecPosX = vecPosX;
-        sFullStateFile.vecPosY = vecPosY;
-        if boolThreeD
-            sFullStateFile.vecPosZ = vecPosZ;
-        end
-        sFullStateFile.vecDiameter    = vecDiameter;
-        sFullStateFile.scalBoxWidthX  = scalBoxWidthX;
-        sFullStateFile.scalBoxHeightY = scalBoxHeightY;
-        if boolThreeD
-            sFullStateFile.scalBoxDepthZ = scalBoxDepthZ;
-        end
-        sFullStateFile.K                = scalSpringConstant;
-        sFullStateFile.P_target         = scalPressureTarget;
-        sFullStateFile.scalPressure     = scalPressure;
-        sFullStateFile.N_original       = scalNumParticlesOriginal;
-        sFullStateFile.seed             = scalSeed;
-        sFullStateFile.scalRoundedWidth = scalRoundedWidth;
-        cellFullStateFields = fieldnames(sFullStateFile);
-        save(strFullFilename, '-struct', 'sFullStateFile', cellFullStateFields{:});
-        fprintf('Full-state tile saved to: %s\n', strFullFilename);
+    %    BEFORE cleanRats. It is saved inside the one output file as the
+    %    struct sFullState: the repeat-tile source (packRepeatTile reads it;
+    %    the per-step box rescalings already wrap positions into [0, L), so
+    %    every coordinate is in-box) and the rattlers-included state that
+    %    frictional statistics need. The field names (K, P_target,
+    %    N_original, seed, ...) are the format the old *_Full.mat used.
+    sFullState = struct();
+    sFullState.vecPosX = vecPosX;
+    sFullState.vecPosY = vecPosY;
+    if boolThreeD
+        sFullState.vecPosZ = vecPosZ;
+    end
+    sFullState.vecDiameter    = vecDiameter;
+    sFullState.scalBoxWidthX  = scalBoxWidthX;
+    sFullState.scalBoxHeightY = scalBoxHeightY;
+    if boolThreeD
+        sFullState.scalBoxDepthZ = scalBoxDepthZ;
+    end
+    sFullState.K                = scalSpringConstant;
+    sFullState.P_target         = scalPressureTarget;
+    sFullState.scalPressure     = scalPressure;
+    sFullState.N_original       = scalNumParticlesOriginal;
+    sFullState.seed             = scalSeed;
+    sFullState.scalRoundedWidth = scalRoundedWidth;
+    if boolFrictionOn
+        sFullState.fricState = sFricState;   % pre-cleanRats numbering
     end
 
     %% Remove rattlers before saving
@@ -1328,12 +1301,15 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         warning('pack:PNGExportFailed', 'Could not export before-cleanRats plot: %s', sBeforePngME.message);
     end
 
-    % TODO: need to decide logic if I want to use PBC or not
-    % for now, I'll assume fully periodic since weh're mostly done with DEM
+    % pack.m's packings are fully periodic in every direction (the force
+    % loop wraps x, y and z with the minimum image), so cleanRats must use
+    % full PBC in 2D too. With x walls (boolFullyPeriodic = false) it skipped
+    % the x wrap and credited 2 fake contacts to particles near x = 0 and
+    % x = Lx, keeping rattlers.
     if boolThreeD
         matPositions = [vecPosX, vecPosY, vecPosZ];
         vecRadii = vecDiameter ./ 2;
-        [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, true);
+        [matPositions, vecRadii, vecBoolKeep] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, true);
         vecPosX = matPositions(:,1);
         vecPosY = matPositions(:,2);
         vecPosZ = matPositions(:,3);
@@ -1341,9 +1317,15 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
         matPositions = [vecPosX, vecPosY];
         vecRadii = vecDiameter ./ 2;
          scalMuCleanRats = scalMu * boolFrictionOn;
-         [matPositions, vecRadii] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, [], false, scalMuCleanRats);
+         [matPositions, vecRadii, vecBoolKeep] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, [], true, scalMuCleanRats);
         vecPosX = matPositions(:,1);
         vecPosY = matPositions(:,2);
+    end
+    sFullState.vecBoolKeep = vecBoolKeep;   % [N_original x 1] true = in the backbone
+    if boolFrictionOn
+        % Contact forces on the backbone numbering (same order as the
+        % backbone positions; contacts touching a removed rattler dropped).
+        sFricBackbone = reindexFricState(sFricState, vecBoolKeep);
     end
     vecDiameter = vecRadii .* 2;
     scalNumParticlesClean = size(matPositions, 1);
@@ -1586,6 +1568,13 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     sPackingFile.boolFrictionOn = boolFrictionOn;
     sPackingFile.scalMu         = scalMu;
     sPackingFile.scalKt         = scalKt;
+    sPackingFile.boolHertzMindlin = boolHertzMindlin;
+    if boolFrictionOn
+        % Per-contact forces on the BACKBONE numbering: vecContactNN/MM index
+        % the saved vecPosX/vecPosY, N = backbone count, matDispTan dropped.
+        sPackingFile.fricState = sFricBackbone;
+    end
+    sPackingFile.sFullState = sFullState;   % pre-cleanRats state (+ fricState, vecBoolKeep)
     cellPackingFields = fieldnames(sPackingFile);
     save(strFilename, '-struct', 'sPackingFile', cellPackingFields{:});
 
@@ -1593,32 +1582,59 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
 
     %% Repeat-tile the packing in x, y, and/or z for superlattice packings.
     %   Both 2D and 3D use packRepeatTile (single tiling function).
-    %   3D: the tile SOURCE is the FULL jammed state saved before cleanRats
-    %   (strFullFilename, rattlers included), NOT the backbone saved to
-    %   strFilename: the user-visible superlattice repeats the exact
-    %   simulated state, and rattler positions must line up across the
-    %   periodic boundary. The tiled file is saved under the normal packing
-    %   name 3D_N<Ntiled>_P<P>_Width<W>_Seed<s>[_Hertz].mat.
+    %   3D: the tile SOURCE is the FULL jammed state before cleanRats
+    %   (sFullState in strFilename, rattlers included), NOT the backbone:
+    %   the user-visible superlattice repeats the exact simulated state, and
+    %   rattler positions must line up across the periodic boundary. The
+    %   tiled file is saved under the normal packing name
+    %   3D_N<Ntiled>_P<P>_Width<W>_Seed<s>[_Hertz].mat.
     %   2D: unchanged — tiles the backbone (its documented behavior).
+    %   Frictional packings are never tiled (guard at the top of pack.m).
     if boolThreeD
         if scalXMult ~= 1 || scalYMult ~= 1 || scalZMult ~= 1
-            if ~boolSaveFullState
-                error('pack:NeedFullStateFor3DTile', ...
-                    ['3D repeat-tile requires the full (pre-cleanRats) state. ', ...
-                     'Call pack(..., options) with options.saveFullState = true.']);
-            end
             packRepeatTile(scalNumParticles, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
                 boolCalcEig, strSavePath, strSavePath, scalZMult, boolHertzian);
         end
     else
         if scalXMult ~= 1 || scalYMult ~= 1
             packRepeatTile(scalNumParticlesOriginal, scalSpringConstant, scalPressureTarget, scalRoundedWidth, scalSeed, scalXMult, scalYMult, ...
-                boolCalcEig, strSavePath, strSavePath);
+                boolCalcEig, strSavePath, strSavePath, 0, boolHertzian);
             disp("Tile saved to: " + strFilename);
         end
     end
 
     toc
+end
+
+function sFricBackbone = reindexFricState(sFricState, vecBoolKeep)
+% reindexFricState  Re-index pack.m's per-contact forces onto the backbone.
+%   sFricState  : buildFricState output, indexed on the N_original particles
+%   vecBoolKeep : [N_original x 1] logical, true for the particles cleanRats kept
+%   Keeps only contacts whose two particles both survive, renumbers their
+%   indices to the backbone order (the order of the kept positions), and
+%   subsets the per-particle fields. The N x N matDispTan is dropped; it is
+%   the integrator's tangential-spring memory and stays available,
+%   pre-cleanRats, in sFullState.fricState.
+    vecIdxNN = sFricState.vecContactNN(:);                           % [Nc x 1]
+    vecIdxMM = sFricState.vecContactMM(:);                           % [Nc x 1]
+    vecBoolLive = vecBoolKeep(vecIdxNN) & vecBoolKeep(vecIdxMM);     % [Nc x 1] contact survives
+    vecIdxNew = zeros(numel(vecBoolKeep), 1);                        % [N_original x 1] old -> new index
+    vecIdxNew(vecBoolKeep) = 1:sum(vecBoolKeep);
+
+    sFricBackbone = sFricState;
+    sFricBackbone.N            = sum(vecBoolKeep);
+    sFricBackbone.vecRadius    = sFricState.vecRadius(vecBoolKeep);
+    sFricBackbone.vecInertia   = sFricState.vecInertia(vecBoolKeep);
+    sFricBackbone.vecContactNN = vecIdxNew(vecIdxNN(vecBoolLive));
+    sFricBackbone.vecContactMM = vecIdxNew(vecIdxMM(vecBoolLive));
+    sFricBackbone.vecOverlap   = sFricState.vecOverlap(vecBoolLive);
+    sFricBackbone.vecFn        = sFricState.vecFn(vecBoolLive);
+    sFricBackbone.vecFt        = sFricState.vecFt(vecBoolLive);
+    sFricBackbone.vecUnitTanX  = sFricState.vecUnitTanX(vecBoolLive);
+    sFricBackbone.vecUnitTanY  = sFricState.vecUnitTanY(vecBoolLive);
+    if isfield(sFricBackbone, 'matDispTan')
+        sFricBackbone = rmfield(sFricBackbone, 'matDispTan');
+    end
 end
 
 function [vecPosX, vecPosY, cellParticleList, scalNumCellsX, scalNumCellsY] = ...

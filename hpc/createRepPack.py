@@ -13,10 +13,10 @@ def generate_matlab_command(
     packRepeatTile loads a saved base packing and repeats (tiles) it in x, y
     and/or z to build a superlattice. The 2D vs 3D path is selected the same
     way pack.m selects it: scalZMult ~= 0 selects 3D, scalZMult == 0 selects
-    2D. For 3D the base tile source must be the full (pre-cleanRats) file that
-    pack.m writes when options.saveFullState = true (3D_N<N>_P<P>_Width<W>_
-    Seed<s>_Full[_Hertz].mat); packRepeatTile3D loads that file and saves the
-    superlattice under the normal packing name.
+    2D. For 3D the base tile source is the full (pre-cleanRats) state that
+    pack.m stores as sFullState inside its one output file
+    (3D_N<N>_P<P>_Width<W>_Seed<s>[_Hertz].mat); packRepeatTile3D loads it and
+    saves the superlattice under the normal packing name.
 
     calc_eig_str must be a MATLAB boolean ("true"/"false"); strInPath and
     strSavePath are the directory of the base tile / the save location.
@@ -40,7 +40,7 @@ def generate_matlab_command(
 def main():
     # Parameter grid. scalZMult selects the path:
     #   scalZMult = 0  -> 2D packing (tiles x/y only)
-    #   scalZMult ~= 0 -> 3D packing (tiles x/y/z; needs the _Full source file)
+    #   scalZMult ~= 0 -> 3D packing (tiles x/y/z from the base file's sFullState)
     N_values         = [1000]
     K_values         = [100]
     P_target_values = [.0001, .0003, .001, .003, .01, .03, .1]

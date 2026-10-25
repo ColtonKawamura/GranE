@@ -84,11 +84,13 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %    choice the floppy (zero-frequency) modes appear at the generalized
 %    isostatic contact number z = 3 + n_m in 2D, with n_m the number of fully
 %    mobilized contacts per particle.
-%    The contact forces come from the fricState struct that pack.m saves with
-%    saveFrictionalState = true (file *_FricState.mat). fricState is indexed
-%    on the particles before cleanRats, so pass the full state saved with
-%    saveFullState = true (file *_Full.mat) as the packing, not the backbone
-%    .mat. A contact counts as fully mobilized when m >= 1 - mobilizationTol.
+%    The contact forces come from the fricState struct in the one file pack.m
+%    writes for a frictional packing (*_Friction.mat, or *_Hertz_Friction.mat).
+%    Its top-level fricState is already re-indexed onto the backbone, so pass
+%    that file (the backbone positions) as the packing together with its
+%    fricState. (sFullState holds the pre-cleanRats positions and an
+%    un-reindexed copy, sFullState.fricState; those two also match each other.)
+%    A contact counts as fully mobilized when m >= 1 - mobilizationTol.
 %    fricState stores the normal force of the contact law the packing was
 %    made with (pack.m's Hookean or Hertzian force).
 %
@@ -161,13 +163,12 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %     [matPsi, vecLambda] = polyeig(matK, matGamma, matM);
 %     % solves (matK + lambda*matGamma + lambda^2*matM) * psi = 0
 %
-% Example (undamped benchmark against Henkes et al., pack.m frictional run
-% with saveFrictionalState = true and saveFullState = true):
-%     sFull = load('2D_N1000_P0.001_Width32_Seed1_Full.mat');
-%     sFric = load('2D_N1000_P0.001_Width32_Seed1_FricState.mat');
-%     [matK, ~, matM, info] = matSpringDampMass(sFull, 0, sFull.K, 1, ...
+% Example (undamped benchmark against Henkes et al., pack.m frictional run;
+% the one output file holds the backbone and its re-indexed fricState):
+%     sPack = load('2D_N1000_P0.001_Width32_Seed1_Friction.mat');
+%     [matK, ~, matM, info] = matSpringDampMass(sPack, 0, sPack.K, 1, ...
 %         "periodic", true, "uniformMass", true, "friction", true, ...
-%         "stressed", true, "fricState", sFric.fricState, "slipMobilized", true);
+%         "stressed", true, "fricState", sPack.fricState, "slipMobilized", true);
 %     vecOmega2 = eig(full(matK), full(matM));   % Γ = 0, so lambda = ±i*omega
 
     arguments
@@ -532,7 +533,7 @@ function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(fri
 % pack.m's fricState and of the fully mobilized ones, m = |f_t|/(mu f_n) >= 1 - tol.
     if ((fricState.N ~= N) || (max(abs(fricState.vecRadius(:) - radii)) > 1e-12*max(radii)))
         error("matSpringDampMass:FricStateMismatch", ...
-            "fricState does not match the packing. It is indexed before cleanRats, so pass the full state (*_Full.mat) saved by pack.m.");
+            "fricState does not match the packing. Pass pack.m's frictional file (backbone) with its top-level fricState, or sFullState with sFullState.fricState.");
     end
     vecI = min(fricState.vecContactNN(:), fricState.vecContactMM(:));
     vecJ = max(fricState.vecContactNN(:), fricState.vecContactMM(:));

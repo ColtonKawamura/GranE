@@ -31,7 +31,8 @@ function sSpectrum = calcEigenFrequencies(matSpring, matMass, options)
 %       scalNumNegative number of unstable modes (omega^2 < -tol)
 %
 %   Example:
-%       [matK, ~, matM] = matSpringDampMass(sFull, 0, sFull.K, 1, "periodic", true, ...
+%       sPack = load('2D_N500_P0.001_Width22_Seed1_Friction.mat');   % pack.m output
+%       [matK, ~, matM] = matSpringDampMass(sPack, 0, sPack.K, 1, "periodic", true, ...
 %           "uniformMass", true, "friction", true);
 %       sSpectrum = calcEigenFrequencies(matK, matM);
 
