@@ -14,9 +14,9 @@ addpath(fullfile(strRepoRoot, 'src'));
 % the DEM compression protocol in pack.m (Cundall-Strack friction, bidisperse
 % disks). N is nominally 1000; the saved backbone count (after cleanRats
 % rattler removal) can be a little lower.
-% pack.m names it 2D_N1000_P0.001_Width32_Seed1.mat (Width = round(sqrt(1000)) = 32).
+% pack.m names it 2D_N1000_P0.001_Width32_Seed1_Friction.mat (Width = round(sqrt(1000)) = 32).
 strPackDir = fullfile(strRepoRoot, 'data');
-strPackingFile = fullfile(strPackDir, '2D_N1000_P0.001_Width32_Seed1.mat');
+strPackingFile = fullfile(strPackDir, '2D_N1000_P0.001_Width32_Seed1_Friction.mat');
 packOpts = struct( ...
     'flagFrictionOn',      true, ...  % Cundall-Strack friction (2D only)
     'scalFricCoef',        0.5, ...   % Coulomb coefficient mu

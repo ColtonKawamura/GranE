@@ -53,7 +53,7 @@ stringOutPath = "~/repos/GranE/tests/testPack/data/";
 packRepeatTile(scalNumParts, scalSpringConstant, scalPressTarg, scalWidth, scalSeed, scalXMult, scalYMult, boolCalcEig, stringInPath , stringOutPath);
 delete("data/2D_N100_P0.001_Width10_Seed1.mat");
 
-foo = load("~/repos/GranE/tests/testPack/data/2D_N368_P0.001_Width20_Seed1.mat");
+foo = load("~/repos/GranE/tests/testPack/data/2D_N376_P0.001_Width20_Seed1.mat");
 
 assert(foo.scalPackingFraction > 0.6 && foo.scalPackingFraction < 0.8, ...
     sprintf('2D scalPackingFraction = %.4f, expected between 0.6 and 0.8', ...
@@ -105,9 +105,10 @@ pack(scalNumParts3D, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, .
     scalPressTarg, scalSeed, false, 1, 1, 2, false, 'data/', optsTile)
 
 % Load the base FULL (pre-cleanRats) state: the tile source (216 particles).
-strBaseFull = "data/3D_N216_P0.001_Width6_Seed1_Full.mat";
+strBaseFull = "data/3D_N216_P0.001_Width6_Seed1.mat";
 assert(isfile(strBaseFull), sprintf('base full-state tile missing: %s', strBaseFull));
-base = load(strBaseFull);
+sBaseFile = load(strBaseFull);
+base = sBaseFile.sFullState;
 basePF = computePackingFraction(base.vecDiameter, base.scalBoxWidthX, base.scalBoxHeightY, base.scalBoxDepthZ);
 baseZn = computeMeanCoordNum(base.vecPosX, base.vecPosY, base.vecDiameter, base.scalBoxWidthX, base.scalBoxHeightY, base.vecPosZ, base.scalBoxDepthZ);
 
@@ -158,8 +159,8 @@ scalZMult = 0;
 
 pack(scalNumParts, scalSpringConstant, scalDiamSmall, scalDiamBig, scalMass, scalPressTarg, scalSeed, false, scalXMult, scalYMult, scalZMult, boolCalcEig, 'data/', opts)
 
-foo = load("data/2D_N100_P0.001_Width10_Seed1.mat");
-delete("data/2D_N100_P0.001_Width10_Seed1.mat");
+foo = load("data/2D_N100_P0.001_Width10_Seed1_Friction.mat");
+delete("data/2D_N100_P0.001_Width10_Seed1_Friction.mat");
 
 
 scalPressFrictional = foo.scalPressure;
