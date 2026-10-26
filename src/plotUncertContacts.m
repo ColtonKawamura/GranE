@@ -10,18 +10,20 @@ function hFig = plotUncertContacts(sUncert, options)
 %   not resolved whether it exists, yet cleanRats and matSpringDampMass count
 %   it like any other contact. This figure shows how impactful those
 %   contacts are, one row per contact law:
-%     (a) how deep the weak tail of f/<f> goes on the backbone,
-%     (b) how many weak contacts there are (backbone, and all contacts),
-%     (c) their share of the backbone's normal stiffness sum k_n,
-%     (d) how much cutting them would move z, as a share of z - z_iso
-%         (the distance from isostaticity the vibrational spectrum follows).
+%     (a,e) the uncertain tail: cumulative distribution of f/<f> on the
+%           backbone (marker at each curve's weakest contact = mu),
+%     (b,f) N_uncert, the number of uncertain contacts (backbone, and all),
+%     (c,g) their share of the backbone's normal stiffness sum k_n,
+%     (d,h) how much cutting them would move z, as a share of z - z_iso
+%           (the distance from isostaticity the vibrational spectrum follows).
+%   Panels are lettered continuously, row by row.
 %
 %   sUncert is the 4th output of cleanRats (one struct per packing; pass a
 %   struct array to compare packings). cleanRats calls this function itself
 %   when its sUncertOptions.boolPlot is true.
 %
 %   Colour: pressure, red (high) -> blue (low) on a log scale, as in
-%   plotAttenuation. Squares; larger squares = larger friction coefficient.
+%   plotAttenuation. Marker shape = friction coefficient (one shape per mu).
 %
 %   Options:
 %       boolLightMode  light (true, default) or dark (false) figure
@@ -56,16 +58,12 @@ function hFig = plotUncertContacts(sUncert, options)
         matColourP = min(matColourP + 0.35*(1 - matColourP), 1);   % lifted for a dark background
     end
 
-    % ---- square size by friction (normalized log mu) ----
+    % ---- marker shape by friction (one shape per mu, same size) ----
     vecMu = [sUncert.scalMu];
     vecMuList = unique(vecMu);
-    vecLogMu = log(max(vecMuList, eps));
-    if numel(vecMuList) > 1
-        vecNormMu = (vecLogMu - min(vecLogMu)) / (max(vecLogMu) - min(vecLogMu));
-    else
-        vecNormMu = 0.5*ones(size(vecMuList));
-    end
-    vecSizeMu = 5 + 9*vecNormMu;
+    cellMarkers = {'o', 's', '^', 'd', 'p', 'v', 'h', '>', '<'};
+    cellMarkerMu = cellMarkers(1 + mod(0:numel(vecMuList) - 1, numel(cellMarkers)));
+    scalMarkerSize = 8;
 
     cellLaw = unique({sUncert.strContactLaw}, 'stable');
     scalNumRows = numel(cellLaw);
@@ -101,31 +99,36 @@ function hFig = plotUncertContacts(sUncert, options)
             vecF = sort(sUncert(idxK).vecForceRel(sUncert(idxK).vecBoolBackbone));
             vecCdf = (1:numel(vecF))'/numel(vecF);
             plot(axTail, vecF, vecCdf, '-', 'Color', colourOf(sUncert(idxK).scalPressure), 'LineWidth', 0.9, 'HandleVisibility', 'off');
+            if ~isempty(vecF)   % mu marker at the weakest contact, where the curve ends
+                plot(axTail, vecF(1), vecCdf(1), cellMarkerMu{vecMuList == sUncert(idxK).scalMu}, 'MarkerSize', 6, ...
+                    'Color', colourOf(sUncert(idxK).scalPressure), 'MarkerFaceColor', colourOf(sUncert(idxK).scalPressure), 'HandleVisibility', 'off');
+            end
         end
         xline(axTail, scalFloor, '--', 'Color', vecFg, 'LineWidth', 1.3, 'HandleVisibility', 'off');
         text(axTail, 2.5e-9, 0.45, {'$\mathrm{below\ the}$', '$\mathrm{noise\ floor}$'}, 'Interpreter', 'latex', 'FontSize', 12, 'Color', vecFg);
         set(axTail, 'XScale', 'log', 'YScale', 'log', 'XLim', [1e-9 10], 'YLim', [1e-4 1], 'XTick', 10.^(-8:2:0));
         xlabel(axTail, '$f_c/\langle f\rangle$', 'Interpreter', 'latex');
         ylabel(axTail, '$\mathrm{fraction\ of\ backbone\ contacts}\ \le f_c$', 'Interpreter', 'latex');
-        title(axTail, sprintf('$\\mathrm{(a)\\ %s:\\ the\\ weak\\ tail}$', strLaw), 'Interpreter', 'latex');
+        cellLetter = num2cell(char('a' + 4*(idxRow - 1) + (0:3)));
+        title(axTail, sprintf('$\\mathrm{(%s)\\ %s:\\ the\\ uncertain\\ tail}$', cellLetter{1}, strLaw), 'Interpreter', 'latex');
 
-        % (b)-(d): one square per packing, x = pressure (spread by mu)
+        % (b)-(d): one marker per packing, shape = mu, x = pressure (spread by mu)
         for idxK = vecIdxLaw
             s = sUncert(idxK);
             vecCol = colourOf(s.scalPressure);
-            scalSize = vecSizeMu(vecMuList == s.scalMu);
+            strMk = cellMarkerMu{vecMuList == s.scalMu};
             scalX = s.scalPressure * 10^(0.07*(find(vecMuList == s.scalMu) - (numel(vecMuList) + 1)/2));
-            plot(axCount, scalX, s.scalNumWeak, 's', 'MarkerSize', scalSize, 'Color', vecCol, 'LineWidth', 1.1, 'HandleVisibility', 'off');
-            plot(axCount, scalX, s.scalNumWeakBackbone, 's', 'MarkerSize', scalSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
-            plot(axStiff, scalX, 100*s.scalStiffShareWeak, 's', 'MarkerSize', scalSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
-            plot(axDz, scalX, 100*s.scalDeltaZRel, 's', 'MarkerSize', scalSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
+            plot(axCount, scalX, s.scalNumWeak, strMk, 'MarkerSize', scalMarkerSize, 'Color', vecCol, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+            plot(axCount, scalX, s.scalNumWeakBackbone, strMk, 'MarkerSize', scalMarkerSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
+            plot(axStiff, scalX, 100*s.scalStiffShareWeak, strMk, 'MarkerSize', scalMarkerSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
+            plot(axDz, scalX, 100*s.scalDeltaZRel, strMk, 'MarkerSize', scalMarkerSize, 'Color', vecCol, 'MarkerFaceColor', vecCol, 'HandleVisibility', 'off');
         end
-        ylabel(axCount, '$N_{\rm weak}\ \mathrm{per\ packing}$', 'Interpreter', 'latex');
-        title(axCount, sprintf('$\\mathrm{(b)\\ how\\ many:}\\ f_c<%s\\langle f\\rangle$', latexPow(scalFloor)), 'Interpreter', 'latex');
-        ylabel(axStiff, '$\sum_{\rm weak} k_n \,/\, \sum_{\rm backbone} k_n\ (\%)$', 'Interpreter', 'latex');
-        title(axStiff, '$\mathrm{(c)\ share\ of\ the\ backbone\ stiffness}$', 'Interpreter', 'latex');
-        ylabel(axDz, '$(z - z_{\rm cut})\,/\,(z - z_{\rm iso})\ (\%)$', 'Interpreter', 'latex');
-        title(axDz, '$\mathrm{(d)\ cutting\ them:\ shift\ of}\ z - z_{\rm iso}$', 'Interpreter', 'latex');
+        ylabel(axCount, '$N_{\mathrm{uncert}}\ \mathrm{per\ packing}$', 'Interpreter', 'latex');
+        title(axCount, sprintf('$\\mathrm{(%s)\\ how\\ many:}\\ f_c<%s\\langle f\\rangle$', cellLetter{2}, latexPow(scalFloor)), 'Interpreter', 'latex');
+        ylabel(axStiff, '$\sum_{\mathrm{uncert}} k_n \,/\, \sum_{\mathrm{backbone}} k_n\ (\%)$', 'Interpreter', 'latex');
+        title(axStiff, sprintf('$\\mathrm{(%s)\\ share\\ of\\ the\\ backbone\\ stiffness}$', cellLetter{3}), 'Interpreter', 'latex');
+        ylabel(axDz, '$(z - z_{\mathrm{cut}})\,/\,(z - z_{\mathrm{iso}})\ (\%)$', 'Interpreter', 'latex');
+        title(axDz, sprintf('$\\mathrm{(%s)\\ cutting\\ them:\\ shift\\ of}\\ z - z_{\\mathrm{iso}}$', cellLetter{4}), 'Interpreter', 'latex');
         % y ranges from the data: (d) is signed (cutting can also RAISE z, when
         % it removes low-z disks), and leave headroom above (b) for its legend
         sLaw = sUncert(vecIdxLaw);
@@ -152,12 +155,12 @@ function hFig = plotUncertContacts(sUncert, options)
                 'DisplayName', sprintf('$P = %s$', latexPow(vecPList(idxP))));
         end
         legend(axTail, 'Location', 'southeast', 'Interpreter', 'latex', 'FontSize', 10, 'TextColor', vecFg, 'Color', vecBg, 'EdgeColor', vecGrid);
-        plot(axCount, NaN, NaN, 's', 'MarkerSize', 8, 'Color', vecFg, 'MarkerFaceColor', vecFg, 'DisplayName', '$\mathrm{backbone}$');
-        plot(axCount, NaN, NaN, 's', 'MarkerSize', 8, 'Color', vecFg, 'DisplayName', '$\mathrm{all\ (incl.\ rattlers)}$');
+        % fill meaning as a subtitle: a legend glyph would reuse a mu shape
+        subtitle(axCount, '$\mathrm{filled:\ backbone;\ open:\ all\ (incl.\ rattlers)}$', 'Interpreter', 'latex', 'Color', vecFg, 'FontSize', 10);
         for idxMu = 1:numel(vecMuList)
-            plot(axCount, NaN, NaN, 's', 'MarkerSize', vecSizeMu(idxMu), 'Color', vecGrid, 'DisplayName', sprintf('$\\mu = %g$', vecMuList(idxMu)));
+            plot(axCount, NaN, NaN, cellMarkerMu{idxMu}, 'MarkerSize', scalMarkerSize, 'Color', vecGrid, 'MarkerFaceColor', vecGrid, 'DisplayName', sprintf('$\\mu = %g$', vecMuList(idxMu)));
         end
-        legend(axCount, 'Location', 'north', 'Interpreter', 'latex', 'FontSize', 9, 'TextColor', vecFg, 'Color', vecBg, 'EdgeColor', vecGrid, 'NumColumns', 3);
+        legend(axCount, 'Location', 'north', 'Interpreter', 'latex', 'FontSize', 9, 'TextColor', vecFg, 'Color', vecBg, 'EdgeColor', vecGrid, 'NumColumns', 5);
 
         for ax = [axTail, axCount, axStiff, axDz]
             set(ax, 'Color', vecBg, 'XColor', vecFg, 'YColor', vecFg, 'GridColor', vecGrid, ...
