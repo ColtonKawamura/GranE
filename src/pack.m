@@ -191,7 +191,8 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     scalFrictionBalWindow     = 300;        % sustained force-balance steps to accept
     scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
                                              % (frictional 2D isostatic z_iso = 3)
-    scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase (safety only)
+    scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase: reaching it
+                                             % raises pack:FrictionNotConverged, nothing is saved
     scalFrictionStrain        = 0.01;       % current box strain per resize (starts at the
                                              % frictionless fast rate, halved on each reversal)
     scalFrictionStrainMin     = 1e-2 * scalPressureTarget;  % floor for the bisected strain step
@@ -1051,9 +1052,18 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
                       idxStep, scalPressure, scalPressure / scalPressureTarget, scalBoxWidthX, scalForceRatio, scalTorqueRatio, scalMeanCoordNum);
                   break;
               elseif idxStep >= scalFrictionMaxSteps
+                  % Never save an unconverged frictional packing: it would carry
+                  % residual forces far above scalFrictionForceTol, and because
+                  % an existing file is reused, it would silently stand in for
+                  % this (N, P, seed) in every later run. Fail instead; the
+                  % caller decides what to do (runFrictionalDOS tries another
+                  % seed). The step cap itself is unchanged.
                   fprintf('Frictional MAX-STEP cap at step %d | P=%.4e (P/Pt=%.3f) maxFnet/<fn>=%.3e maxTnet/(<fn><R>)=%.3e meanCoordNum=%.2f\n', ...
                       idxStep, scalPressure, scalPressure / scalPressureTarget, scalForceRatio, scalTorqueRatio, scalMeanCoordNum);
-                  break;
+                  error('pack:FrictionNotConverged', ...
+                      ['Frictional packing (N = %d, P_target = %g, seed %d) did not reach force and torque balance ' ...
+                       'within %d steps (maxFnet/<fn> = %.3e, maxTnet/(<fn><R>) = %.3e, tol = %.0e). Nothing was saved.'], ...
+                      scalNumParticles, scalPressureTarget, scalSeed, scalFrictionMaxSteps, scalForceRatio, scalTorqueRatio, scalFrictionForceTol);
               end
         elseif boolFastCompressPhase
             % ===== Fast-compress phase (frictionless two-stage) =====
