@@ -1,10 +1,10 @@
-function [matPositions, vecRadii, vecBoolKeep, sKawa] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, boolFullyPeriodic, scalMu, sKawaOptions)
+function [matPositions, vecRadii, vecBoolKeep, sUncert] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, boolFullyPeriodic, scalMu, sUncertOptions)
 % cleanRats(pos, radii, Ly, Lx)                   — 2D, PBC in y only, frictionless
 % cleanRats(pos, radii, Ly, Lx, Lz)              — 3D, PBC in y and z, frictionless
 % cleanRats(pos, radii, Ly, Lx, Lz, boolFullyP)  — + full PBC flag (Lz = [] for 2D)
 % cleanRats(..., mu)                              — mu > 0: frictional variant.
-% cleanRats(..., mu, sKawaOptions)                — + statistics of the weak contacts
-% [pos, radii, keep, sKawa] = cleanRats(...)      — (force below a noise floor), see below.
+% cleanRats(..., mu, sUncertOptions)                — + statistics of the weak contacts
+% [pos, radii, keep, sUncert] = cleanRats(...)      — (force below a noise floor), see below.
 %
 % Removes rattlers, repeatedly, until every remaining particle has enough
 % contacts. Returns the surviving positions and radii (input order kept) and
@@ -41,22 +41,22 @@ function [matPositions, vecRadii, vecBoolKeep, sKawa] = cleanRats(matPositions, 
 % mu is the 7th positional argument (callers that omit it get mu = 0, the
 % frictionless rule); scalBoxDepthZ = [] signals a 2D call.
 %
-% WEAK ("KAWA") CONTACTS — optional, off unless asked for. A contact whose
+% UNCERTAIN (SUB-NOISE) CONTACTS — optional, off unless asked for. A contact whose
 % normal force is below scalForceFloor * <f> (default 1e-4, pack.m's force-
 % balance tolerance) is below the equilibration noise: whether it exists at
 % all is not resolved, yet it is counted like any other contact. With an
-% 8th argument sKawaOptions (struct; all fields optional), or when the 4th
-% output is requested, cleanRats also returns sKawa, the statistics of
-% those contacts on THIS packing, and with sKawaOptions.boolPlot = true it
-% draws them with plotKawaContact. The forces come from the overlaps alone:
+% 8th argument sUncertOptions (struct; all fields optional), or when the 4th
+% output is requested, cleanRats also returns sUncert, the statistics of
+% those contacts on THIS packing, and with sUncertOptions.boolPlot = true it
+% draws them with plotUncertContacts. The forces come from the overlaps alone:
 % f ~ delta (Hooke) or sqrt(R_eff) delta^(3/2) (Hertz), so f/<f> needs no
 % spring constant. <f> is the mean over ALL contacts of the input packing.
-%   sKawaOptions.boolPlot       draw plotKawaContact for this packing (false)
-%   sKawaOptions.strContactLaw  'hooke' or 'hertz' ('hooke')
-%   sKawaOptions.scalPressure   pressure label, used for the colour (NaN)
-%   sKawaOptions.scalForceFloor noise floor in units of <f> (1e-4)
-%   sKawaOptions.boolLightMode  light (true) or dark (false) figure
-%   sKawaOptions.strSavePath    PNG to export the figure to ("": none)
+%   sUncertOptions.boolPlot       draw plotUncertContacts for this packing (false)
+%   sUncertOptions.strContactLaw  'hooke' or 'hertz' ('hooke')
+%   sUncertOptions.scalPressure   pressure label, used for the colour (NaN)
+%   sUncertOptions.scalForceFloor noise floor in units of <f> (1e-4)
+%   sUncertOptions.boolLightMode  light (true) or dark (false) figure
+%   sUncertOptions.strSavePath    PNG to export the figure to ("": none)
 % The removal itself (positions, radii, vecBoolKeep) is unchanged by these
 % options.
     if nargin < 6
@@ -67,11 +67,11 @@ function [matPositions, vecRadii, vecBoolKeep, sKawa] = cleanRats(matPositions, 
     end
     boolThreeD = nargin >= 5 && ~isempty(scalBoxDepthZ);
     if nargin < 8
-        sKawaOptions = struct();
+        sUncertOptions = struct();
     end
-    sKawaOptions = fillKawaOptions(sKawaOptions);
-    boolKawa = nargout >= 4 || sKawaOptions.boolPlot;
-    if boolKawa
+    sUncertOptions = fillUncertOptions(sUncertOptions);
+    boolUncert = nargout >= 4 || sUncertOptions.boolPlot;
+    if boolUncert
         % contact list of the INPUT packing (before any removal)
         matPositionsIn = matPositions;
         vecRadiiIn     = vecRadii;
@@ -153,12 +153,12 @@ function [matPositions, vecRadii, vecBoolKeep, sKawa] = cleanRats(matPositions, 
     vecBoolKeep = false(scalNumOriginal, 1);
     vecBoolKeep(vecIdxSurvivor) = true;
 
-    sKawa = struct([]);
-    if boolKawa
-        sKawa = kawaContactStats(matPositionsIn, vecRadiiIn, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
-            boolThreeD, boolFullyPeriodic, scalMu, vecBoolKeep, sKawaOptions);
-        if sKawaOptions.boolPlot
-            plotKawaContact(sKawa, 'boolLightMode', sKawaOptions.boolLightMode, 'strSavePath', sKawaOptions.strSavePath);
+    sUncert = struct([]);
+    if boolUncert
+        sUncert = uncertContactStats(matPositionsIn, vecRadiiIn, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
+            boolThreeD, boolFullyPeriodic, scalMu, vecBoolKeep, sUncertOptions);
+        if sUncertOptions.boolPlot
+            plotUncertContacts(sUncert, 'boolLightMode', sUncertOptions.boolLightMode, 'strSavePath', sUncertOptions.strSavePath);
         end
     end
 
@@ -167,7 +167,7 @@ function [matPositions, vecRadii, vecBoolKeep, sKawa] = cleanRats(matPositions, 
 end
 
 
-function sOpt = fillKawaOptions(sOpt)
+function sOpt = fillUncertOptions(sOpt)
 % Defaults for the optional weak-contact statistics.
     sDefault = struct('boolPlot', false, 'strContactLaw', 'hooke', 'scalPressure', NaN, ...
         'scalForceFloor', 1e-4, 'boolLightMode', true, 'strSavePath', "");
@@ -178,10 +178,10 @@ function sOpt = fillKawaOptions(sOpt)
         end
     end
     assert(any(strcmpi(sOpt.strContactLaw, {'hooke', 'hertz'})), 'cleanRats:ContactLaw', ...
-        'sKawaOptions.strContactLaw must be ''hooke'' or ''hertz''.');
+        'sUncertOptions.strContactLaw must be ''hooke'' or ''hertz''.');
 end
 
-function sKawa = kawaContactStats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
+function sUncert = uncertContactStats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
         boolThreeD, boolFullyPeriodic, scalMu, vecBoolKeep, sOpt)
 % Statistics of the contacts whose force is below sOpt.scalForceFloor * <f>,
 % and what removing them would do to the backbone. Uses the same contact
@@ -251,26 +251,26 @@ function sKawa = kawaContactStats(matPositions, vecRadii, scalBoxHeightY, scalBo
     scalZ = 2 * scalNcB / max(scalNi, 1);
     scalZCut = 2 * scalNcCut / max(scalNiCut, 1);
 
-    sKawa = struct();
-    sKawa.strContactLaw = lower(char(sOpt.strContactLaw));
-    sKawa.scalMu = scalMu;
-    sKawa.scalPressure = sOpt.scalPressure;
-    sKawa.scalForceFloor = sOpt.scalForceFloor;
-    sKawa.vecForceRel = vecForceRel;              % [Nc x 1] f/<f>, every contact of the input packing
-    sKawa.vecStiffRel = vecStiff / mean(vecStiff(vecBoolBackbone));   % [Nc x 1] k_n/<k_n>_backbone
-    sKawa.vecBoolBackbone = vecBoolBackbone;      % [Nc x 1] both disks survive cleanRats
-    sKawa.vecBoolWeak = vecBoolWeak;              % [Nc x 1] f < floor * <f>
-    sKawa.scalNumContacts = numel(vecI);
-    sKawa.scalNumContactsBackbone = scalNcB;
-    sKawa.scalNumWeak = nnz(vecBoolWeak);
-    sKawa.scalNumWeakBackbone = nnz(vecBoolWeak & vecBoolBackbone);
-    sKawa.scalStiffShareWeak = sum(vecStiff(vecBoolWeak & vecBoolBackbone)) / sum(vecStiff(vecBoolBackbone));
-    sKawa.scalNi = scalNi;
-    sKawa.scalNiCut = scalNiCut;                  % backbone disks left if the weak contacts were cut
-    sKawa.scalZ = scalZ;
-    sKawa.scalZCut = scalZCut;
-    sKawa.scalZIso = scalZIso;
-    sKawa.scalDeltaZRel = (scalZ - scalZCut) / (scalZ - scalZIso);   % share of z - z_iso the cut removes
+    sUncert = struct();
+    sUncert.strContactLaw = lower(char(sOpt.strContactLaw));
+    sUncert.scalMu = scalMu;
+    sUncert.scalPressure = sOpt.scalPressure;
+    sUncert.scalForceFloor = sOpt.scalForceFloor;
+    sUncert.vecForceRel = vecForceRel;              % [Nc x 1] f/<f>, every contact of the input packing
+    sUncert.vecStiffRel = vecStiff / mean(vecStiff(vecBoolBackbone));   % [Nc x 1] k_n/<k_n>_backbone
+    sUncert.vecBoolBackbone = vecBoolBackbone;      % [Nc x 1] both disks survive cleanRats
+    sUncert.vecBoolWeak = vecBoolWeak;              % [Nc x 1] f < floor * <f>
+    sUncert.scalNumContacts = numel(vecI);
+    sUncert.scalNumContactsBackbone = scalNcB;
+    sUncert.scalNumWeak = nnz(vecBoolWeak);
+    sUncert.scalNumWeakBackbone = nnz(vecBoolWeak & vecBoolBackbone);
+    sUncert.scalStiffShareWeak = sum(vecStiff(vecBoolWeak & vecBoolBackbone)) / sum(vecStiff(vecBoolBackbone));
+    sUncert.scalNi = scalNi;
+    sUncert.scalNiCut = scalNiCut;                  % backbone disks left if the weak contacts were cut
+    sUncert.scalZ = scalZ;
+    sUncert.scalZCut = scalZCut;
+    sUncert.scalZIso = scalZIso;
+    sUncert.scalDeltaZRel = (scalZ - scalZCut) / (scalZ - scalZIso);   % share of z - z_iso the cut removes
 end
 
 function vecBoolKeep = removeRattlers(vecI, vecJ, vecZWall, scalZMin)

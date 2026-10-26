@@ -1,9 +1,9 @@
-function hFig = plotKawaContact(sKawa, options)
-% plotKawaContact  How much the sub-noise ("Kawa") contacts matter.
+function hFig = plotUncertContacts(sUncert, options)
+% plotUncertContacts  How much the sub-noise contacts matter.
 %
-%   plotKawaContact(sKawa)
-%   plotKawaContact(sKawa, 'boolLightMode', false, 'strSavePath', "kawa.png")
-%   hFig = plotKawaContact(...)
+%   plotUncertContacts(sUncert)
+%   plotUncertContacts(sUncert, 'boolLightMode', false, 'strSavePath', "uncertContacts.png")
+%   hFig = plotUncertContacts(...)
 %
 %   A contact whose normal force is below scalForceFloor*<f> (pack.m's
 %   force-balance tolerance, 1e-4) is inside the equilibration noise: it is
@@ -16,9 +16,9 @@ function hFig = plotKawaContact(sKawa, options)
 %     (d) how much cutting them would move z, as a share of z - z_iso
 %         (the distance from isostaticity the vibrational spectrum follows).
 %
-%   sKawa is the 4th output of cleanRats (one struct per packing; pass a
+%   sUncert is the 4th output of cleanRats (one struct per packing; pass a
 %   struct array to compare packings). cleanRats calls this function itself
-%   when its sKawaOptions.boolPlot is true.
+%   when its sUncertOptions.boolPlot is true.
 %
 %   Colour: pressure, red (high) -> blue (low) on a log scale, as in
 %   plotAttenuation. Squares; larger squares = larger friction coefficient.
@@ -28,7 +28,7 @@ function hFig = plotKawaContact(sKawa, options)
 %       strSavePath    export a PNG there ("" = no export)
 
     arguments
-        sKawa (1, :) struct
+        sUncert (1, :) struct
         options.boolLightMode (1, 1) logical = true
         options.strSavePath (1, 1) string = ""
     end
@@ -41,7 +41,7 @@ function hFig = plotKawaContact(sKawa, options)
     end
 
     % ---- colour by pressure (normVarColor: [n, 0, 1-n], n = normalized log P) ----
-    vecP = [sKawa.scalPressure];
+    vecP = [sUncert.scalPressure];
     vecPList = unique(vecP(~isnan(vecP)));
     vecLogP = log(vecPList);
     if numel(vecPList) > 1
@@ -57,7 +57,7 @@ function hFig = plotKawaContact(sKawa, options)
     end
 
     % ---- square size by friction (normalized log mu) ----
-    vecMu = [sKawa.scalMu];
+    vecMu = [sUncert.scalMu];
     vecMuList = unique(vecMu);
     vecLogMu = log(max(vecMuList, eps));
     if numel(vecMuList) > 1
@@ -67,9 +67,9 @@ function hFig = plotKawaContact(sKawa, options)
     end
     vecSizeMu = 5 + 9*vecNormMu;
 
-    cellLaw = unique({sKawa.strContactLaw}, 'stable');
+    cellLaw = unique({sUncert.strContactLaw}, 'stable');
     scalNumRows = numel(cellLaw);
-    scalFloor = sKawa(1).scalForceFloor;
+    scalFloor = sUncert(1).scalForceFloor;
 
     hFig = figure('Color', vecBg, 'Position', [60 60 1750 430*scalNumRows]);
     try
@@ -83,7 +83,7 @@ function hFig = plotKawaContact(sKawa, options)
     end
 
     for idxRow = 1:scalNumRows
-        vecIdxLaw = find(strcmp({sKawa.strContactLaw}, cellLaw{idxRow}));
+        vecIdxLaw = find(strcmp({sUncert.strContactLaw}, cellLaw{idxRow}));
         strLaw = 'Hooke';
         if strcmp(cellLaw{idxRow}, 'hertz')
             strLaw = 'Hertz';
@@ -98,9 +98,9 @@ function hFig = plotKawaContact(sKawa, options)
         % (a) cumulative distribution of f/<f> on the backbone
         patch(axTail, [1e-9 scalFloor scalFloor 1e-9], [1e-4 1e-4 1 1], vecShade, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         for idxK = vecIdxLaw
-            vecF = sort(sKawa(idxK).vecForceRel(sKawa(idxK).vecBoolBackbone));
+            vecF = sort(sUncert(idxK).vecForceRel(sUncert(idxK).vecBoolBackbone));
             vecCdf = (1:numel(vecF))'/numel(vecF);
-            plot(axTail, vecF, vecCdf, '-', 'Color', colourOf(sKawa(idxK).scalPressure), 'LineWidth', 0.9, 'HandleVisibility', 'off');
+            plot(axTail, vecF, vecCdf, '-', 'Color', colourOf(sUncert(idxK).scalPressure), 'LineWidth', 0.9, 'HandleVisibility', 'off');
         end
         xline(axTail, scalFloor, '--', 'Color', vecFg, 'LineWidth', 1.3, 'HandleVisibility', 'off');
         text(axTail, 2.5e-9, 0.45, {'$\mathrm{below\ the}$', '$\mathrm{noise\ floor}$'}, 'Interpreter', 'latex', 'FontSize', 12, 'Color', vecFg);
@@ -111,7 +111,7 @@ function hFig = plotKawaContact(sKawa, options)
 
         % (b)-(d): one square per packing, x = pressure (spread by mu)
         for idxK = vecIdxLaw
-            s = sKawa(idxK);
+            s = sUncert(idxK);
             vecCol = colourOf(s.scalPressure);
             scalSize = vecSizeMu(vecMuList == s.scalMu);
             scalX = s.scalPressure * 10^(0.07*(find(vecMuList == s.scalMu) - (numel(vecMuList) + 1)/2));
@@ -128,7 +128,7 @@ function hFig = plotKawaContact(sKawa, options)
         title(axDz, '$\mathrm{(d)\ cutting\ them:\ shift\ of}\ z - z_{\rm iso}$', 'Interpreter', 'latex');
         % y ranges from the data: (d) is signed (cutting can also RAISE z, when
         % it removes low-z disks), and leave headroom above (b) for its legend
-        sLaw = sKawa(vecIdxLaw);
+        sLaw = sUncert(vecIdxLaw);
         cellY = {[sLaw.scalNumWeak], 100*[sLaw.scalStiffShareWeak], 100*[sLaw.scalDeltaZRel]};
         vecHeadroom = [1.75, 1.15, 1.15];
         cellAxY = {axCount, axStiff, axDz};
