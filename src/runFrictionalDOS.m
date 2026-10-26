@@ -14,6 +14,11 @@ function runFrictionalDOS(strContactLaw, options)
 %      2D_N<N>_P<P>_Width<W>_Seed<s>_Friction.mat ("hertz": ..._Hertz_Friction.mat).
 %      Existing packings are reused (pack.m skips a packing whose .mat
 %      exists), so an interrupted run resumes where it stopped.
+%      A packing that does not reach force and torque balance within
+%      pack.m's step cap is not saved (pack:FrictionNotConverged). It is
+%      replaced by the packing of seed + 1000 (then + 2000, ...), up to
+%      scalSeedRetries times; sRuns records the requested seed (scalSeed,
+%      the grid label) and the seed actually packed (scalSeedUsed).
 %   2. That file already holds the backbone (rattlers, particles with fewer
 %      than 2 contacts, removed repeatedly by cleanRats), the pack.m contact
 %      forces re-indexed to the backbone (fricState) and the full
@@ -40,6 +45,8 @@ function runFrictionalDOS(strContactLaw, options)
 %       scalK          pack.m spring constant K (default 100)
 %       scalKtOverK    tangential/normal stiffness ratio (default 1/3)
 %       scalMobTol     m >= 1 - scalMobTol is fully mobilized (default 1e-6)
+%       scalSeedRetries replacement seeds tried when a packing does not
+%                      converge (seed + 1000*k, k = 1..scalSeedRetries; default 2)
 %       strDataDir     output directory (default <GranE>/data/frictionalDOS)
 
     arguments
@@ -52,6 +59,7 @@ function runFrictionalDOS(strContactLaw, options)
         options.scalK        (1, 1) double = 100
         options.scalKtOverK  (1, 1) double = 1/3
         options.scalMobTol   (1, 1) double = 1e-6
+        options.scalSeedRetries (1, 1) double {mustBeInteger, mustBeNonnegative} = 2
         options.strDataDir   (1, 1) string = ""
     end
 
@@ -77,6 +85,11 @@ function runFrictionalDOS(strContactLaw, options)
     if isfile(strSpectraFile)
         sLoaded = load(strSpectraFile, 'sRuns');
         sRuns = sLoaded.sRuns;
+        if ~isempty(sRuns) && ~isfield(sRuns, 'scalSeedUsed')
+            % spectra.mat written before replacement seeds existed: every
+            % packing used its requested seed
+            [sRuns.scalSeedUsed] = sRuns.scalSeed;
+        end
     end
 
     for idxRun = 1:size(matRuns, 1)
@@ -99,15 +112,32 @@ function runFrictionalDOS(strContactLaw, options)
         sPackOptions = struct('flagFrictionOn', true, 'scalFricCoef', scalMu, ...
             'scalTangentialK', options.scalKtOverK, 'scalGammaNormal', 0, 'scalGammaTangential', 0, ...
             'hertzian', strContactLaw == "hertz", 'hertzMindlin', strContactLaw == "hertz");
-        pack(options.scalN, options.scalK, 1, 1.4, 1, scalP, scalSeed, false, 1, 1, 0, false, ...
-            string([char(strPackDir) filesep]), sPackOptions);
+        % pack.m refuses to save a packing that hits its step cap
+        % (pack:FrictionNotConverged). Replace it with the packing of another
+        % seed rather than raising the cap: seed + 1000*k cannot collide with
+        % the small grid seeds, and the file name records the seed used.
+        for idxRetry = 0:options.scalSeedRetries
+            scalSeedUsed = scalSeed + 1000*idxRetry;
+            try
+                pack(options.scalN, options.scalK, 1, 1.4, 1, scalP, scalSeedUsed, false, 1, 1, 0, false, ...
+                    string([char(strPackDir) filesep]), sPackOptions);
+                break;
+            catch sPackME
+                close all;
+                if ~strcmp(sPackME.identifier, 'pack:FrictionNotConverged') || idxRetry == options.scalSeedRetries
+                    rethrow(sPackME);
+                end
+                fprintf('[runFrictionalDOS]   seed %d did not converge; replacing it with seed %d\n', ...
+                    scalSeedUsed, scalSeed + 1000*(idxRetry + 1));
+            end
+        end
         close all;
         strFileSuffix = '_Friction';
         if strContactLaw == "hertz"
             strFileSuffix = '_Hertz_Friction';
         end
         strPackingFile = fullfile(strPackDir, sprintf('2D_N%d_P%s_Width%d_Seed%d%s.mat', options.scalN, num2str(scalP), ...
-            round(sqrt(options.scalN)), scalSeed, strFileSuffix));
+            round(sqrt(options.scalN)), scalSeedUsed, strFileSuffix));
         sPackingFile = load(strPackingFile);
 
         % 2) backbone, its re-indexed contact forces and the statistics
@@ -131,7 +161,8 @@ function runFrictionalDOS(strContactLaw, options)
         sRun.strContactLaw = char(strContactLaw);
         sRun.scalMu = scalMu;
         sRun.scalPressureTarget = scalP;
-        sRun.scalSeed = scalSeed;
+        sRun.scalSeed = scalSeed;            % requested seed (grid label)
+        sRun.scalSeedUsed = scalSeedUsed;    % seed actually packed (differs after a replacement)
         sRun.sStick = calcEigenFrequencies(matKStick, matMass);
         sRun.sSlip = calcEigenFrequencies(matKSlip, matMass);
         sRun.sAllSlip = calcEigenFrequencies(matKAllSlip, matMass);
