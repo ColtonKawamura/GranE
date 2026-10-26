@@ -1,10 +1,12 @@
-function [matPositions, vecRadii, vecBoolKeep, sUncert] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, boolFullyPeriodic, scalMu, sUncertOptions)
+function [matPositions, vecRadii, vecBoolKeep, sUncert, sUncertBefore] = cleanRats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, boolFullyPeriodic, scalMu, sUncertOptions)
 % cleanRats(pos, radii, Ly, Lx)                   — 2D, PBC in y only, frictionless
 % cleanRats(pos, radii, Ly, Lx, Lz)              — 3D, PBC in y and z, frictionless
 % cleanRats(pos, radii, Ly, Lx, Lz, boolFullyP)  — + full PBC flag (Lz = [] for 2D)
 % cleanRats(..., mu)                              — mu > 0: frictional variant.
 % cleanRats(..., mu, sUncertOptions)                — + statistics of the weak contacts
 % [pos, radii, keep, sUncert] = cleanRats(...)      — (force below a noise floor), see below.
+% [pos, radii, keep, sUncert, sUncertBefore] = cleanRats(..., mu, struct('boolRemoveUnresolved', true, ...))
+%                                                  — + the unresolved-particle rule, see below.
 %
 % Removes rattlers, repeatedly, until every remaining particle has enough
 % contacts. Returns the surviving positions and radii (input order kept) and
@@ -57,8 +59,19 @@ function [matPositions, vecRadii, vecBoolKeep, sUncert] = cleanRats(matPositions
 %   sUncertOptions.scalForceFloor noise floor in units of <f> (1e-4)
 %   sUncertOptions.boolLightMode  light (true) or dark (false) figure
 %   sUncertOptions.strSavePath    PNG to export the figure to ("": none)
-% The removal itself (positions, radii, vecBoolKeep) is unchanged by these
-% options.
+%   sUncertOptions.boolRemoveUnresolved
+%                                 apply the unresolved-particle rule (false)
+% Only boolRemoveUnresolved changes the removal itself.
+%
+% UNRESOLVED-PARTICLE RULE (Agnolin & Roux, PRE 76, 061302, 2007) — opt-in.
+% With sUncertOptions.boolRemoveUnresolved = true, a particle whose contacts
+% ALL carry less than scalForceFloor * <f> is removed too: its contact forces
+% are below the force-balance tolerance, so it carries no resolved load and
+% is a rattler that the noise left touching its neighbours. The ordinary Zn
+% rule is re-applied and both are repeated until nothing changes. Then
+% sUncert describes the final backbone and the 5th output sUncertBefore the
+% backbone of the ordinary rule; with boolPlot, both are drawn (titled
+% before / after; strSavePath gets _before / _after).
     if nargin < 6
         boolFullyPeriodic = false;
     end
@@ -70,7 +83,7 @@ function [matPositions, vecRadii, vecBoolKeep, sUncert] = cleanRats(matPositions
         sUncertOptions = struct();
     end
     sUncertOptions = fillUncertOptions(sUncertOptions);
-    boolUncert = nargout >= 4 || sUncertOptions.boolPlot;
+    boolUncert = nargout >= 4 || sUncertOptions.boolPlot || sUncertOptions.boolRemoveUnresolved;
     if boolUncert
         % contact list of the INPUT packing (before any removal)
         matPositionsIn = matPositions;
@@ -154,11 +167,37 @@ function [matPositions, vecRadii, vecBoolKeep, sUncert] = cleanRats(matPositions
     vecBoolKeep(vecIdxSurvivor) = true;
 
     sUncert = struct([]);
+    sUncertBefore = struct([]);
     if boolUncert
-        sUncert = uncertContactStats(matPositionsIn, vecRadiiIn, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
-            boolThreeD, boolFullyPeriodic, scalMu, vecBoolKeep, sUncertOptions);
+        sContacts = contactList(matPositionsIn, vecRadiiIn, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
+            boolThreeD, boolFullyPeriodic, scalMu, sUncertOptions.strContactLaw);
+        sUncertBefore = uncertContactStats(sContacts, scalMu, boolThreeD, vecBoolKeep, sUncertOptions);
+        sUncert = sUncertBefore;
+        if sUncertOptions.boolRemoveUnresolved
+            vecBoolKeepBefore = vecBoolKeep;
+            vecBoolKeep = removeUnresolved(sContacts, vecBoolKeepBefore, sContacts.vecForceRel < sUncertOptions.scalForceFloor);
+            matPositions = matPositionsIn(vecBoolKeep, :);
+            vecRadii = vecRadiiIn(vecBoolKeep);
+            scalNumUnresolved = nnz(vecBoolKeepBefore & ~vecBoolKeep);
+            scalTotalRattlers = scalTotalRattlers + scalNumUnresolved;
+            fprintf('[cleanRats] unresolved-particle rule: %d more particles removed (all contacts < %g <f>, then Zn rule).\n', ...
+                scalNumUnresolved, sUncertOptions.scalForceFloor);
+            sUncert = uncertContactStats(sContacts, scalMu, boolThreeD, vecBoolKeep, sUncertOptions);
+        end
         if sUncertOptions.boolPlot
-            plotUncertContacts(sUncert, 'boolLightMode', sUncertOptions.boolLightMode, 'strSavePath', sUncertOptions.strSavePath);
+            if sUncertOptions.boolRemoveUnresolved
+                [strDir, strName, strExt] = fileparts(sUncertOptions.strSavePath);
+                vecStrPath = ["", ""];
+                if strlength(sUncertOptions.strSavePath) > 0
+                    vecStrPath = [fullfile(strDir, strName + "_before" + strExt), fullfile(strDir, strName + "_after" + strExt)];
+                end
+                plotUncertContacts(sUncertBefore, 'boolLightMode', sUncertOptions.boolLightMode, 'strSavePath', vecStrPath(1), ...
+                    'strTitle', "before removing unresolved particles");
+                plotUncertContacts(sUncert, 'boolLightMode', sUncertOptions.boolLightMode, 'strSavePath', vecStrPath(2), ...
+                    'strTitle', "after removing unresolved particles");
+            else
+                plotUncertContacts(sUncert, 'boolLightMode', sUncertOptions.boolLightMode, 'strSavePath', sUncertOptions.strSavePath);
+            end
         end
     end
 
@@ -170,7 +209,7 @@ end
 function sOpt = fillUncertOptions(sOpt)
 % Defaults for the optional weak-contact statistics.
     sDefault = struct('boolPlot', false, 'strContactLaw', 'hooke', 'scalPressure', NaN, ...
-        'scalForceFloor', 1e-4, 'boolLightMode', true, 'strSavePath', "");
+        'scalForceFloor', 1e-4, 'boolLightMode', true, 'strSavePath', "", 'boolRemoveUnresolved', false);
     cellNames = fieldnames(sDefault);
     for idxName = 1:numel(cellNames)
         if ~isfield(sOpt, cellNames{idxName})
@@ -181,11 +220,11 @@ function sOpt = fillUncertOptions(sOpt)
         'sUncertOptions.strContactLaw must be ''hooke'' or ''hertz''.');
 end
 
-function sUncert = uncertContactStats(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
-        boolThreeD, boolFullyPeriodic, scalMu, vecBoolKeep, sOpt)
-% Statistics of the contacts whose force is below sOpt.scalForceFloor * <f>,
-% and what removing them would do to the backbone. Uses the same contact
-% definition (real overlap, minimum image) and removal rule as cleanRats.
+function sContacts = contactList(matPositions, vecRadii, scalBoxHeightY, scalBoxWidthX, scalBoxDepthZ, ...
+        boolThreeD, boolFullyPeriodic, scalMu, strContactLaw)
+% Contact list of a packing with the contact definition of cleanRats (real
+% overlap, minimum image), the relative force and stiffness of every
+% contact, the wall credit and the rattler threshold.
     scalN = size(matPositions, 1);
     vecL = [scalBoxWidthX, scalBoxHeightY];
     if boolThreeD
@@ -212,16 +251,13 @@ function sUncert = uncertContactStats(matPositions, vecRadii, scalBoxHeightY, sc
 
     % relative force and stiffness of every contact (no spring constant needed)
     vecREff = vecRadii(vecI) .* vecRadii(vecJ) ./ (vecRadii(vecI) + vecRadii(vecJ));
-    if strcmpi(sOpt.strContactLaw, 'hertz')
+    if strcmpi(strContactLaw, 'hertz')
         vecForce = sqrt(vecREff) .* vecDelta.^(3/2);   % f / ((4/3) K)
         vecStiff = sqrt(vecREff .* vecDelta);          % k_n / (2 K)
     else
         vecForce = vecDelta;                           % f / K
         vecStiff = ones(size(vecDelta));               % k_n / K
     end
-    vecForceRel = vecForce / mean(vecForce);
-    vecBoolWeak = vecForceRel < sOpt.scalForceFloor;
-    vecBoolBackbone = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
 
     % the rattler rule of cleanRats, on a contact list (walls credited as in cleanRats)
     vecZWall = zeros(scalN, 1);
@@ -235,7 +271,48 @@ function sUncert = uncertContactStats(matPositions, vecRadii, scalBoxHeightY, sc
     else
         scalZMin = 3;
     end
-    vecBoolKeepCut = removeRattlers(vecI(~vecBoolWeak), vecJ(~vecBoolWeak), vecZWall, scalZMin);
+
+    sContacts = struct('vecI', vecI, 'vecJ', vecJ, 'vecForceRel', vecForce / mean(vecForce), ...
+        'vecStiff', vecStiff, 'vecZWall', vecZWall, 'scalZMin', scalZMin);
+end
+
+function vecBoolKeep = removeUnresolved(sContacts, vecBoolKeep, vecBoolWeak)
+% Agnolin & Roux (PRE 76, 061302, 2007): discard every particle whose
+% contacts all carry less than the force tolerance, then re-apply the
+% rattler rule, and repeat until nothing changes. vecBoolKeep starts as the
+% backbone of the ordinary rule. Particles touching a wall (non-periodic x)
+% are only removed by the ordinary rule, since the wall force is not known here.
+    vecI = sContacts.vecI; vecJ = sContacts.vecJ;
+    scalN = numel(vecBoolKeep);
+    while true
+        vecBoolLive = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
+        vecZ = zeros(scalN, 1);
+        vecZStrong = zeros(scalN, 1);
+        if any(vecBoolLive)
+            vecZ = accumarray([vecI(vecBoolLive); vecJ(vecBoolLive)], 1, [scalN 1]);
+        end
+        vecBoolLiveStrong = vecBoolLive & ~vecBoolWeak;
+        if any(vecBoolLiveStrong)
+            vecZStrong = accumarray([vecI(vecBoolLiveStrong); vecJ(vecBoolLiveStrong)], 1, [scalN 1]);
+        end
+        vecBoolUnresolved = vecZ > 0 & vecZStrong == 0 & sContacts.vecZWall == 0;
+        vecBoolDrop = vecBoolKeep & (vecBoolUnresolved | sContacts.vecZWall + vecZ < sContacts.scalZMin);
+        if ~any(vecBoolDrop)
+            break;
+        end
+        vecBoolKeep(vecBoolDrop) = false;
+    end
+end
+
+function sUncert = uncertContactStats(sContacts, scalMu, boolThreeD, vecBoolKeep, sOpt)
+% Statistics of the contacts whose force is below sOpt.scalForceFloor * <f>
+% on the backbone vecBoolKeep, and what removing them would do to it.
+    vecI = sContacts.vecI; vecJ = sContacts.vecJ;
+    vecForceRel = sContacts.vecForceRel;
+    vecStiff = sContacts.vecStiff;
+    vecBoolWeak = vecForceRel < sOpt.scalForceFloor;
+    vecBoolBackbone = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
+    vecBoolKeepCut = removeRattlers(vecI(~vecBoolWeak), vecJ(~vecBoolWeak), sContacts.vecZWall, sContacts.scalZMin);
 
     % coordination of the backbone with and without the weak contacts
     scalNi = nnz(vecBoolKeep);
