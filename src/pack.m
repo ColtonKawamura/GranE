@@ -55,6 +55,12 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     if ~isfield(sOptions, 'hertzMindlin')
         sOptions.hertzMindlin = false;
     end
+    if ~isfield(sOptions, 'scalFrictionForceTol')
+        sOptions.scalFrictionForceTol = 1e-4;   % frictional force + torque balance tolerance (see below)
+    end
+    if ~isfield(sOptions, 'scalFrictionMaxSteps')
+        sOptions.scalFrictionMaxSteps = 3e6;    % frictional step cap (see below)
+    end
     boolHertzian      = sOptions.hertzian;       % Hertzian (vs. linear) contact law
     % Hertz-Mindlin friction: the tangential stiffness follows the Hertz
     % normal stiffness, k_t = (K_t/K) * k_n(delta) with k_n = 2 K sqrt(R_eff delta),
@@ -181,7 +187,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     %% steps with the box held and a percolating contact network
     %% (mean Zn >= scalFrictionZmin), as OverDamp.cpp's Acc_max < Fthresh.
     scalFrictionDeadBand     = 0.15;        % P in-band: |P - P_target|/P_target < 15%
-    scalFrictionForceTol     = 1e-4;        % accept when max|F_net| < tol*<|f_n|> AND
+    scalFrictionForceTol     = sOptions.scalFrictionForceTol;   % default 1e-4: accept when max|F_net| < tol*<|f_n|> AND
                                              % max|tau_net| < tol*<|f_n|>*<R> on every grain.
                                              % Must sit well below the weakest contact force we
                                              % count: at 1e-2 the residual exceeded Shundyak's
@@ -191,7 +197,7 @@ function pack(scalNumParticles, scalSpringConstant, scalDiameterSmall, scalDiame
     scalFrictionBalWindow     = 300;        % sustained force-balance steps to accept
     scalFrictionZmin          = 2.5;        % percolation guard: mean Zn above this to accept
                                              % (frictional 2D isostatic z_iso = 3)
-    scalFrictionMaxSteps      = 3e6;        % hard cap for the frictional phase: reaching it
+    scalFrictionMaxSteps      = sOptions.scalFrictionMaxSteps;   % default 3e6: hard cap for the frictional phase: reaching it
                                              % raises pack:FrictionNotConverged, nothing is saved
     scalFrictionStrain        = 0.01;       % current box strain per resize (starts at the
                                              % frictionless fast rate, halved on each reversal)
