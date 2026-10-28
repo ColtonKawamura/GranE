@@ -28,11 +28,14 @@ function hFig = plotUncertContacts(sUncert, options)
 %   Options:
 %       boolLightMode  light (true, default) or dark (false) figure
 %       strSavePath    export a PNG there ("" = no export)
+%       strTitle       figure title in plain words ("" = none), e.g. "after
+%                      removing unresolved particles"
 
     arguments
         sUncert (1, :) struct
         options.boolLightMode (1, 1) logical = true
         options.strSavePath (1, 1) string = ""
+        options.strTitle (1, 1) string = ""
     end
 
     % ---- theme -------------------------------------------------------------
@@ -140,8 +143,12 @@ function hFig = plotUncertContacts(sUncert, options)
             vecY = cellY{idxAx};
             scalLo = min([0, vecY]);
             scalHi = max([vecY, 0]);
-            scalSpan = max(scalHi - scalLo, eps);
+            scalSpan = scalHi - scalLo;
+            if scalSpan < 1e-12
+                scalSpan = 1;   % all zero (e.g. after removing unresolved particles): a readable [0, 1] axis
+            end
             ylim(ax, [scalLo - 0.08*scalSpan*(scalLo < 0), scalLo + vecHeadroom(idxAx)*scalSpan]);
+            ax.YAxis.Exponent = 0;   % no x10^n label: it collides with the panel title
             yline(ax, 0, '-', 'Color', vecGrid, 'LineWidth', 0.6, 'HandleVisibility', 'off');
             vecTick = unique(10.^floor(log10(vecPList) + 1e-12));   % decades only: 3e-5 and 1e-4 labels would collide
             set(ax, 'XScale', 'log', 'XLim', [min(vecPList)/3, max(vecPList)*3], 'XTick', vecTick, ...
@@ -169,6 +176,10 @@ function hFig = plotUncertContacts(sUncert, options)
             grid(ax, 'on');
             axis(ax, 'square');
         end
+    end
+
+    if strlength(options.strTitle) > 0
+        sgtitle(hFig, "$\mathrm{" + replace(options.strTitle, " ", "\ ") + "}$", 'Interpreter', 'latex', 'Color', vecFg, 'FontSize', 16);
     end
 
     if strlength(options.strSavePath) > 0

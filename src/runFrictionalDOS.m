@@ -48,6 +48,10 @@ function runFrictionalDOS(strContactLaw, options)
 %       scalSeedRetries replacement seeds tried when a packing does not
 %                      converge (seed + 1000*k, k = 1..scalSeedRetries; default 2)
 %       strDataDir     output directory (default <GranE>/data/frictionalDOS)
+%       scalForceTol   pack.m's frictional force/torque balance tolerance, in
+%                      units of <|f_n|> (default 1e-4). The file names do not
+%                      record it: use a separate strDataDir for another value.
+%       scalMaxSteps   pack.m's frictional step cap (default 3e6)
 
     arguments
         strContactLaw (1, 1) string {mustBeMember(strContactLaw, ["hooke", "hertz"])}
@@ -61,6 +65,8 @@ function runFrictionalDOS(strContactLaw, options)
         options.scalMobTol   (1, 1) double = 1e-6
         options.scalSeedRetries (1, 1) double {mustBeInteger, mustBeNonnegative} = 2
         options.strDataDir   (1, 1) string = ""
+        options.scalForceTol (1, 1) double {mustBePositive} = 1e-4
+        options.scalMaxSteps (1, 1) double {mustBePositive} = 3e6
     end
 
     strRepoRoot = fileparts(fileparts(mfilename('fullpath')));
@@ -111,7 +117,8 @@ function runFrictionalDOS(strContactLaw, options)
         end
         sPackOptions = struct('flagFrictionOn', true, 'scalFricCoef', scalMu, ...
             'scalTangentialK', options.scalKtOverK, 'scalGammaNormal', 0, 'scalGammaTangential', 0, ...
-            'hertzian', strContactLaw == "hertz", 'hertzMindlin', strContactLaw == "hertz");
+            'hertzian', strContactLaw == "hertz", 'hertzMindlin', strContactLaw == "hertz", ...
+            'scalFrictionForceTol', options.scalForceTol, 'scalFrictionMaxSteps', options.scalMaxSteps);
         % pack.m refuses to save a packing that hits its step cap
         % (pack:FrictionNotConverged). Replace it with the packing of another
         % seed rather than raising the cap: seed + 1000*k cannot collide with
