@@ -26,6 +26,8 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
 %                   flagged boolCollapsed and get no spectrum.
 %   <f> is the mean |f_n| over all contacts of the full pre-cleanRats state,
 %   the normalization of cleanRats and plotUncertContacts.
+%   The rules themselves live in unresolvedParticles and the reduced backbone
+%   comes from subsetBackbone; runFrictionalDOS uses the same two functions.
 %
 %   Also stored, for plotUnresolvedDOS:
 %     - the modes of the ORIGINAL Frictional dynamical matrix: their
@@ -102,17 +104,9 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
         vecKn = contactStiffness(sPack, sFric, strContactLaw);        % [Nc x 1]
         vecZ = accumarray([vecI; vecJ], 1, [scalNi 1]);
 
-        % 1) the particles the rule removes, then the cascade
-        if options.strRule == "unresolved"
-            vecBoolWeak = vecForceRel < options.scalForceFloor;
-            vecZWeak = accumarray([vecI(vecBoolWeak); vecJ(vecBoolWeak)], 1, [scalNi 1]);
-            vecBoolHit = vecZ > 0 & vecZWeak == vecZ;
-            scalZMin = 2;                                             % cleanRats' rattler rule
-        else
-            vecBoolHit = vecZ <= 2;
-            scalZMin = 3;                                             % z_i <= 2 removed, iterated
-        end
-        vecBoolKeep = cascade(~vecBoolHit, vecI, vecJ, scalNi, scalZMin);
+        % 1) the particles the rule removes, then the cascade (shared with
+        % runFrictionalDOS)
+        [vecBoolKeep, vecBoolHit] = unresolvedParticles(sFric, scalNi, scalFMean, options.strRule, options.scalForceFloor);
 
         s = struct();
         s.strContactLaw = char(strContactLaw);
@@ -187,23 +181,6 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
     fprintf('[runUnresolvedDOS] %s done: %d packings -> %s\n', strContactLaw, numel(sResults), strOutFile);
 end
 
-function vecBoolKeep = cascade(vecBoolKeep, vecI, vecJ, scalNi, scalZMin)
-% Remove kept particles with fewer than scalZMin contacts among kept
-% particles, repeatedly, until nothing changes.
-    while true
-        vecBoolLive = vecBoolKeep(vecI) & vecBoolKeep(vecJ);
-        vecZ = zeros(scalNi, 1);
-        if any(vecBoolLive)
-            vecZ = accumarray([vecI(vecBoolLive); vecJ(vecBoolLive)], 1, [scalNi 1]);
-        end
-        vecBoolDrop = vecBoolKeep & vecZ < scalZMin;
-        if ~any(vecBoolDrop)
-            return;
-        end
-        vecBoolKeep(vecBoolDrop) = false;
-    end
-end
-
 function vecKn = contactStiffness(sPack, sFric, strContactLaw)
 % Normal contact stiffness: K (Hooke) or 2 K sqrt(R_eff delta) (Hertz), as
 % matSpringDampMass and runFrictionalDOS' <k_n>.
@@ -259,25 +236,4 @@ function [vecOmegaHat, vecShare, vecPR] = modeLocalization(matK, matMass, vecBoo
     vecPR = (sum(matWeight, 1).^2./(scalNi*sum(matWeight.^2, 1))).';
     vecShare = sum(matWeight(vecBoolRemoved, :), 1).';
     vecOmegaHat = sign(vecOmegaSq).*sqrt(abs(vecOmegaSq))/sqrt(scalMeanKn);
-end
-
-function [sPackCut, sFricCut] = subsetBackbone(sPack, sFric, vecBoolKeep)
-% The backbone without the removed particles; fricState re-indexed onto it
-% (as pack.m's reindexFricState).
-    vecIdxNew = zeros(numel(vecBoolKeep), 1);
-    vecIdxNew(vecBoolKeep) = 1:nnz(vecBoolKeep);
-    sPackCut = sPack;
-    sPackCut.vecPosX = sPack.vecPosX(vecBoolKeep);
-    sPackCut.vecPosY = sPack.vecPosY(vecBoolKeep);
-    sPackCut.vecDiameter = sPack.vecDiameter(vecBoolKeep);
-    vecBoolLive = vecBoolKeep(sFric.vecContactNN) & vecBoolKeep(sFric.vecContactMM);
-    sFricCut = sFric;
-    for strField = ["vecOverlap", "vecFn", "vecFt", "vecUnitTanX", "vecUnitTanY"]
-        sFricCut.(strField) = sFric.(strField)(vecBoolLive);
-    end
-    sFricCut.vecContactNN = vecIdxNew(sFric.vecContactNN(vecBoolLive));
-    sFricCut.vecContactMM = vecIdxNew(sFric.vecContactMM(vecBoolLive));
-    sFricCut.vecRadius = sFric.vecRadius(vecBoolKeep);
-    sFricCut.vecInertia = sFric.vecInertia(vecBoolKeep);
-    sFricCut.N = nnz(vecBoolKeep);
 end

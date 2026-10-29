@@ -32,8 +32,22 @@ function runFrictionalDOS(strContactLaw, options)
 %   4. calcEigenFrequencies gives omega for each version; the spectra and the
 %      packing statistics (z, n_m, pressure, ...) are appended to
 %      <strDataDir>/<strContactLaw>/spectra.mat after every packing.
+%   5. With boolUnresolvedSpectra (default true) the four spectra are
+%      computed a second time without the unresolved particles: particles
+%      whose backbone contacts all carry f_n < scalForceFloor*<f>, i.e.
+%      forces inside pack.m's equilibration noise (Agnolin & Roux, PRE 76,
+%      061302 (2007)), followed by cleanRats' z_i < 2 cascade (see
+%      unresolvedParticles). They are stored next to the originals as
+%      sStickCut, sSlipCut, sAllSlipCut, sFrictionlessCut with the reduced
+%      network's statistics (scalNiCut, scalZCut, ...). Both versions are
+%      always reported, because for Hertz contacts these few particles bias
+%      the low-frequency DOS and omega*. Runs already in spectra.mat that do
+%      not have the second set (or have it for another scalForceFloor) get
+%      it from their saved packing, without re-packing. The packings
+%      themselves are unchanged: cleanRats' own rule stays opt-in.
 %
-%   plotFrictionalDOS makes the figures from spectra.mat.
+%   plotFrictionalDOS makes the figures from spectra.mat; plotUnresolvedDOS
+%   (with runUnresolvedDOS) makes the with/without comparison figures.
 %
 %   Options:
 %       vecMu          friction coefficients (default [0.01 0.1 0.3 1 10])
@@ -52,6 +66,11 @@ function runFrictionalDOS(strContactLaw, options)
 %                      units of <|f_n|> (default 1e-4). The file names do not
 %                      record it: use a separate strDataDir for another value.
 %       scalMaxSteps   pack.m's frictional step cap (default 3e6)
+%       boolUnresolvedSpectra  also store the spectra without the unresolved
+%                      particles (default true; step 5)
+%       scalForceFloor force floor of the unresolved-particle rule, in units
+%                      of <f> = mean |f_n| of the full state (default 1e-4,
+%                      pack.m's balance tolerance)
 
     arguments
         strContactLaw (1, 1) string {mustBeMember(strContactLaw, ["hooke", "hertz"])}
@@ -67,6 +86,8 @@ function runFrictionalDOS(strContactLaw, options)
         options.strDataDir   (1, 1) string = ""
         options.scalForceTol (1, 1) double {mustBePositive} = 1e-4
         options.scalMaxSteps (1, 1) double {mustBePositive} = 3e6
+        options.boolUnresolvedSpectra (1, 1) logical = true
+        options.scalForceFloor (1, 1) double {mustBePositive} = 1e-4
     end
 
     strRepoRoot = fileparts(fileparts(mfilename('fullpath'))); % climb twice up to add src too path
@@ -97,6 +118,28 @@ function runFrictionalDOS(strContactLaw, options)
             % spectra.mat written before replacement seeds existed: every
             % packing used its requested seed
             [sRuns.scalSeedUsed] = sRuns.scalSeed;
+        end
+    end
+
+    % Resume, part 2: runs saved without the spectra minus the unresolved
+    % particles (or with another force floor) get them from their packing.
+    if options.boolUnresolvedSpectra
+        for idxOld = 1:numel(sRuns)
+            if isfield(sRuns, 'scalNiCut') && ~isempty(sRuns(idxOld).scalNiCut) ...
+                    && isequal(sRuns(idxOld).scalForceFloor, options.scalForceFloor)
+                continue;
+            end
+            sOld = sRuns(idxOld);
+            sPackingFile = load(packingFileName(strLawDir, strContactLaw, sOld.scalN, sOld.scalMu, ...
+                sOld.scalPressureTarget, sOld.scalSeedUsed));
+            [sPacking, sFricBackbone] = frictionalBackbone(sPackingFile, sOld.scalMu, options.scalMobTol);
+            sCut = unresolvedSpectra(sPackingFile, sPacking, sFricBackbone, sOld, strContactLaw, options);
+            for strField = string(fieldnames(sCut)).'
+                sRuns(idxOld).(strField) = sCut.(strField);
+            end
+            save(strSpectraFile, 'sRuns');
+            fprintf('[runFrictionalDOS] %s mu = %g, P = %g, seed %d: added the spectra without %d unresolved particles\n', ...
+                strContactLaw, sOld.scalMu, sOld.scalPressureTarget, sOld.scalSeed, sCut.scalNumUnresolvedRemoved);
         end
     end
 
@@ -141,27 +184,13 @@ function runFrictionalDOS(strContactLaw, options)
             end
         end
         close all;
-        strFileSuffix = '_Friction';
-        if strContactLaw == "hertz"
-            strFileSuffix = '_Hertz_Friction';
-        end
-        strPackingFile = fullfile(strPackDir, sprintf('2D_N%d_P%s_Width%d_Seed%d%s.mat', options.scalN, num2str(scalP), ...
-            round(sqrt(options.scalN)), scalSeedUsed, strFileSuffix));
-        sPackingFile = load(strPackingFile);
+        sPackingFile = load(packingFileName(strLawDir, strContactLaw, options.scalN, scalMu, scalP, scalSeedUsed));
 
         % 2) backbone, its re-indexed contact forces and the statistics
         [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, scalMu, options.scalMobTol);
 
-        % 3) the four stiffness matrices (pre-stress on, Γ = 0)
-        cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
-            "fricState", sFricBackbone, "contactLaw", strContactLaw, ...
-            "tangentialSpringConstant", options.scalKtOverK*options.scalK, "mobilizationTol", options.scalMobTol};
-        [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:});
-        matKSlip    = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:}, "slipMobilized", true);
-        matKAllSlip = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
-            "fricState", sFricBackbone, "slipMobilized", true, "mobilizationTol", 1);
-        [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, options.scalK, 1, ...
-            "periodic", true, "uniformMass", true, "stressed", true, "contactLaw", strContactLaw);
+        % 3) the four stiffness matrices (pre-stress on, Γ = 0) and their spectra
+        [sSpectra, sInfo] = fourSpectra(sPacking, sFricBackbone, strContactLaw, options);
         assert(sInfo.numContacts == sStats.scalNc && sInfo.numMobilized == sStats.scalNmContacts && sInfo.numNotInFricState == 0, ...
             'runFrictionalDOS:ContactMismatch', 'matSpringDampMass found a different contact network than fricState.');
 
@@ -172,23 +201,113 @@ function runFrictionalDOS(strContactLaw, options)
         sRun.scalPressureTarget = scalP;
         sRun.scalSeed = scalSeed;            % requested seed (grid label)
         sRun.scalSeedUsed = scalSeedUsed;    % seed actually packed (differs after a replacement)
-        sRun.sStick = calcEigenFrequencies(matKStick, matMass);
-        sRun.sSlip = calcEigenFrequencies(matKSlip, matMass);
-        sRun.sAllSlip = calcEigenFrequencies(matKAllSlip, matMass);
-        sRun.sFrictionless = calcEigenFrequencies(matKFrictionless, matMassFrictionless);
+        sRun.sStick = sSpectra.sStick;
+        sRun.sSlip = sSpectra.sSlip;
+        sRun.sAllSlip = sSpectra.sAllSlip;
+        sRun.sFrictionless = sSpectra.sFrictionless;
         sRun.scalElapsed = toc;
-        if isempty(sRuns)
-            sRuns = sRun;
-        else
-            sRuns(end + 1) = sRun; %#ok<AGROW>
+
+        % 5) the same spectra without the unresolved particles
+        strCutNote = '';
+        if options.boolUnresolvedSpectra
+            sCut = unresolvedSpectra(sPackingFile, sPacking, sFricBackbone, sRun, strContactLaw, options);
+            for strField = string(fieldnames(sCut)).'
+                sRun.(strField) = sCut.(strField);
+            end
+            strCutNote = sprintf(' | unresolved removed %d', sCut.scalNumUnresolvedRemoved);
         end
+        sRuns = appendRun(sRuns, sRun);
         save(strSpectraFile, 'sRuns');
         fprintf(['[runFrictionalDOS]   Ni = %d, z = %.3f, n_m = %.3f, z - (3 + n_m) = %.3f, p = %.3e, <k_n> = %.3e | ' ...
-            'zero/negative modes: stick %d/%d, slip %d/%d | %.0f s\n'], ...
+            'zero/negative modes: stick %d/%d, slip %d/%d%s | %.0f s\n'], ...
             sRun.scalNi, sRun.scalZ, sRun.scalNm, sRun.scalZ - 3 - sRun.scalNm, sRun.scalPressureVirial, sRun.scalMeanKn, ...
-            sRun.sStick.scalNumZero, sRun.sStick.scalNumNegative, sRun.sSlip.scalNumZero, sRun.sSlip.scalNumNegative, sRun.scalElapsed);
+            sRun.sStick.scalNumZero, sRun.sStick.scalNumNegative, sRun.sSlip.scalNumZero, sRun.sSlip.scalNumNegative, ...
+            strCutNote, sRun.scalElapsed);
     end
     fprintf('[runFrictionalDOS] %s done: %d packings in %s\n', strContactLaw, numel(sRuns), strSpectraFile);
+end
+
+function strPackingFile = packingFileName(strLawDir, strContactLaw, scalN, scalMu, scalP, scalSeedUsed)
+% The one file pack.m writes for a frictional packing.
+    strFileSuffix = '_Friction';
+    if strContactLaw == "hertz"
+        strFileSuffix = '_Hertz_Friction';
+    end
+    strPackingFile = fullfile(strLawDir, 'packings', sprintf('mu%g', scalMu), ...
+        sprintf('2D_N%d_P%s_Width%d_Seed%d%s.mat', scalN, num2str(scalP), round(sqrt(scalN)), scalSeedUsed, strFileSuffix));
+end
+
+function [sSpectra, sInfo] = fourSpectra(sPacking, sFric, strContactLaw, options)
+% Frictional (stick), Partial Slip (slip), Total Slip (allSlip) and
+% post-pack frictionless spectra of one backbone (pre-stress on, Γ = 0).
+    cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
+        "fricState", sFric, "contactLaw", strContactLaw, ...
+        "tangentialSpringConstant", options.scalKtOverK*options.scalK, "mobilizationTol", options.scalMobTol};
+    [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:});
+    matKSlip    = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:}, "slipMobilized", true);
+    matKAllSlip = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
+        "fricState", sFric, "slipMobilized", true, "mobilizationTol", 1);
+    [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, options.scalK, 1, ...
+        "periodic", true, "uniformMass", true, "stressed", true, "contactLaw", strContactLaw);
+    sSpectra = struct();
+    sSpectra.sStick = calcEigenFrequencies(matKStick, matMass);
+    sSpectra.sSlip = calcEigenFrequencies(matKSlip, matMass);
+    sSpectra.sAllSlip = calcEigenFrequencies(matKAllSlip, matMass);
+    sSpectra.sFrictionless = calcEigenFrequencies(matKFrictionless, matMassFrictionless);
+end
+
+function sCut = unresolvedSpectra(sPackingFile, sPacking, sFric, sRun, strContactLaw, options)
+% The four spectra and the network statistics without the unresolved
+% particles (unresolvedParticles' "unresolved" rule + cascade). sRun holds
+% the spectra with every particle; they are reused when nothing is removed.
+    scalNi = numel(sPacking.vecPosX);
+    scalForceMean = mean(abs(sPackingFile.sFullState.fricState.vecFn));     % <f>: all contacts, full state
+    [vecBoolKeep, vecBoolHit] = unresolvedParticles(sFric, scalNi, scalForceMean, "unresolved", options.scalForceFloor);
+    sCut = struct();
+    sCut.scalForceFloor = options.scalForceFloor;
+    sCut.scalNumUnresolvedHit = nnz(vecBoolHit);             % removed by the rule itself
+    sCut.scalNumUnresolvedRemoved = nnz(~vecBoolKeep);       % rule + cascade
+    if all(vecBoolKeep)
+        sNet = networkStats(sPacking, sFric, sRun.scalMu, options.scalMobTol);
+        sSpectra = struct('sStick', sRun.sStick, 'sSlip', sRun.sSlip, 'sAllSlip', sRun.sAllSlip, ...
+            'sFrictionless', sRun.sFrictionless);
+    elseif nnz(vecBoolKeep) < 2
+        error('runFrictionalDOS:UnresolvedCollapse', ...
+            'Removing the unresolved particles leaves fewer than 2 particles (mu = %g, P = %g, seed %d).', ...
+            sRun.scalMu, sRun.scalPressureTarget, sRun.scalSeed);
+    else
+        [sPackCut, sFricCut] = subsetBackbone(sPacking, sFric, vecBoolKeep);
+        sNet = networkStats(sPackCut, sFricCut, sRun.scalMu, options.scalMobTol);
+        [sSpectra, sInfo] = fourSpectra(sPackCut, sFricCut, strContactLaw, options);
+        assert(sInfo.numContacts == sNet.scalNc && sInfo.numNotInFricState == 0, ...
+            'runFrictionalDOS:ContactMismatch', 'matSpringDampMass found a different contact network than the reduced fricState.');
+    end
+    sCut.scalNiCut = sNet.scalNi;
+    sCut.scalNcCut = sNet.scalNc;
+    sCut.scalZCut = sNet.scalZ;
+    sCut.scalNmCut = sNet.scalNm;
+    sCut.scalMeanKnCut = sNet.scalMeanKn;
+    sCut.scalNumFreeSpinCut = sNet.scalNumFreeSpin;
+    sCut.sStickCut = sSpectra.sStick;
+    sCut.sSlipCut = sSpectra.sSlip;
+    sCut.sAllSlipCut = sSpectra.sAllSlip;
+    sCut.sFrictionlessCut = sSpectra.sFrictionless;
+end
+
+function sRuns = appendRun(sRuns, sRun)
+% Append one run to the struct array; a field only one side has is added to
+% the other as [] (e.g. a run made with boolUnresolvedSpectra = false).
+    if isempty(sRuns)
+        sRuns = sRun;
+        return;
+    end
+    for strField = string(setdiff(fieldnames(sRuns), fieldnames(sRun))).'
+        sRun.(strField) = [];
+    end
+    for strField = string(setdiff(fieldnames(sRun), fieldnames(sRuns))).'
+        [sRuns.(strField)] = deal([]);
+    end
+    sRuns(end + 1) = orderfields(sRun, sRuns(1));
 end
 
 function [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, scalMu, scalMobTol)
@@ -204,38 +323,55 @@ function [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, sc
         'scalBoxWidthX', sPackingFile.scalBoxWidthX, 'scalBoxHeightY', sPackingFile.scalBoxHeightY, ...
         'vecDiameter', sPackingFile.vecDiameter(:));
     sFricBackbone = sPackingFile.fricState;    % backbone numbering, no matDispTan
-    sFricState = sFricBackbone;                % material constants (K, strContactLaw) for the stats below
 
     % Statistics of the backbone (2D).
+    sNet = networkStats(sPacking, sFricBackbone, scalMu, scalMobTol);
     vecFn = abs(sFricBackbone.vecFn);
-    vecOverlap = sFricBackbone.vecOverlap;
     vecRadiusBackbone = sPacking.vecDiameter/2;
-    vecRi = vecRadiusBackbone(sFricBackbone.vecContactNN);
-    vecRj = vecRadiusBackbone(sFricBackbone.vecContactMM);
-    vecDist = vecRi + vecRj - vecOverlap;
-    vecMob = abs(sFricBackbone.vecFt)./(scalMu*vecFn);
+    vecDist = vecRadiusBackbone(sFricBackbone.vecContactNN) + vecRadiusBackbone(sFricBackbone.vecContactMM) ...
+        - sFricBackbone.vecOverlap;
     sStats = struct();
     sStats.scalN = scalN;
-    sStats.scalNi = numel(sPacking.vecPosX);
-    sStats.scalNc = numel(vecFn);
-    sStats.scalNmContacts = sum(vecMob >= 1 - scalMobTol);
-    sStats.scalZ = 2*sStats.scalNc/sStats.scalNi;
-    sStats.scalNm = sStats.scalNmContacts/sStats.scalNi;        % n_m, mobilized contacts per particle
+    sStats.scalNi = sNet.scalNi;
+    sStats.scalNc = sNet.scalNc;
+    sStats.scalNmContacts = sNet.scalNmContacts;
+    sStats.scalZ = sNet.scalZ;
+    sStats.scalNm = sNet.scalNm;                                % n_m, mobilized contacts per particle
     sStats.scalPhi = sum(pi*vecRadius.^2)/(sFull.scalBoxWidthX*sFull.scalBoxHeightY);   % rattlers included
     % Virial pressure p = (1/(d A)) sum_c f_n r_c, d = 2 (normal forces only:
     % r_c is along n, so the tangential forces do not contribute to the trace).
     sStats.scalPressureVirial = sum(vecFn.*vecDist)/(2*sFull.scalBoxWidthX*sFull.scalBoxHeightY);
+    sStats.scalMeanKn = sNet.scalMeanKn;
+    sStats.vecMobilization = sNet.vecMobilization;
+    sStats.scalNumFreeSpin = sNet.scalNumFreeSpin;
+end
+
+function sNet = networkStats(sPacking, sFric, scalMu, scalMobTol)
+% Contact-network statistics of a backbone and its re-indexed fricState:
+% particle and contact counts, z, n_m, <k_n> and the free spinners.
+    vecFn = abs(sFric.vecFn);
+    vecOverlap = sFric.vecOverlap;
+    vecRadiusBackbone = sPacking.vecDiameter/2;
+    vecRi = vecRadiusBackbone(sFric.vecContactNN);
+    vecRj = vecRadiusBackbone(sFric.vecContactMM);
+    vecMob = abs(sFric.vecFt)./(scalMu*vecFn);
+    sNet = struct();
+    sNet.scalNi = numel(sPacking.vecPosX);
+    sNet.scalNc = numel(vecFn);
+    sNet.scalNmContacts = sum(vecMob >= 1 - scalMobTol);
+    sNet.scalZ = 2*sNet.scalNc/sNet.scalNi;
+    sNet.scalNm = sNet.scalNmContacts/sNet.scalNi;
     % Mean normal contact stiffness: K (Hooke) or 2 K sqrt(R_eff delta) (Hertz).
-    if isfield(sFricState, 'strContactLaw') && ~strcmp(sFricState.strContactLaw, 'hooke')
+    if isfield(sFric, 'strContactLaw') && ~strcmp(sFric.strContactLaw, 'hooke')
         vecRadiusEff = vecRi.*vecRj./(vecRi + vecRj);
-        sStats.scalMeanKn = mean(2*sFricState.K*sqrt(vecRadiusEff.*vecOverlap));
+        sNet.scalMeanKn = mean(2*sFric.K*sqrt(vecRadiusEff.*vecOverlap));
     else
-        sStats.scalMeanKn = sFricState.K;
+        sNet.scalMeanKn = sFric.K;
     end
-    sStats.vecMobilization = vecMob;
+    sNet.vecMobilization = vecMob;
     % Particles whose contacts all slip spin freely when slipping is on.
-    vecZiB = accumarray([sFricBackbone.vecContactNN; sFricBackbone.vecContactMM], 1, [sStats.scalNi 1]);
+    vecZiB = accumarray([sFric.vecContactNN; sFric.vecContactMM], 1, [sNet.scalNi 1]);
     vecBoolSlip = vecMob >= 1 - scalMobTol;
-    vecMiB = accumarray([sFricBackbone.vecContactNN(vecBoolSlip); sFricBackbone.vecContactMM(vecBoolSlip)], 1, [sStats.scalNi 1]);
-    sStats.scalNumFreeSpin = sum(vecMiB == vecZiB);
+    vecMiB = accumarray([sFric.vecContactNN(vecBoolSlip); sFric.vecContactMM(vecBoolSlip)], 1, [sNet.scalNi 1]);
+    sNet.scalNumFreeSpin = sum(vecMiB == vecZiB);
 end
