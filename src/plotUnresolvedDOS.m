@@ -64,6 +64,11 @@ function sSummary = plotUnresolvedDOS(options)
 %
 %   Returns sSummary.(law): sGroups (per-(mu, P) omega* with and without,
 %   every estimator) and the fits of fig2.
+%
+%   The sideways jitter that separates overlapping points (fig5 panel c,
+%   fig7 panels a-b) is drawn from a private random stream with a fixed
+%   seed, so every run writes identical PNGs and the caller's global random
+%   state is left untouched.
 
     arguments
         options.strDataDir   (1, 1) string = ""
@@ -78,6 +83,9 @@ function sSummary = plotUnresolvedDOS(options)
         options.scalOmegaRef    (1, 1) double {mustBePositive} = 1
         options.scalModesPerBin (1, 1) double {mustBePositive, mustBeInteger} = 40
     end
+
+    % Fixed-seed stream for the plotting jitter (reproducible figures).
+    sJitterStream = RandStream('mt19937ar', 'Seed', 0);
 
     strRepoRoot = fileparts(fileparts(mfilename('fullpath')));
     addpath(fullfile(strRepoRoot, 'src'));
@@ -261,8 +269,8 @@ function sSummary = plotUnresolvedDOS(options)
         sMu = sAll([sAll.scalMu] == vecMuList(idxMu));
         vecKept = vertcat(sMu.vecTanBetaKept); vecRem = vertcat(sMu.vecTanBetaRemoved);
         scalX = idxMu;
-        plot(ax, scalX - 0.15 + 0.1*(rand(size(vecKept)) - 0.5), vecKept, '.', 'Color', sTheme.vecKept, 'MarkerSize', 5, 'HandleVisibility', 'off');
-        plot(ax, scalX + 0.15 + 0.1*(rand(size(vecRem)) - 0.5), vecRem, 'o', 'Color', sTheme.vecCut, 'MarkerSize', 5, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+        plot(ax, scalX - 0.15 + 0.1*(rand(sJitterStream, size(vecKept)) - 0.5), vecKept, '.', 'Color', sTheme.vecKept, 'MarkerSize', 5, 'HandleVisibility', 'off');
+        plot(ax, scalX + 0.15 + 0.1*(rand(sJitterStream, size(vecRem)) - 0.5), vecRem, 'o', 'Color', sTheme.vecCut, 'MarkerSize', 5, 'LineWidth', 1.1, 'HandleVisibility', 'off');
         plot(ax, scalX + [-0.4 0.4], [vecMuList(idxMu) vecMuList(idxMu)], '-', 'Color', sTheme.vecFg, 'LineWidth', 2, 'HandleVisibility', 'off');
         text(ax, scalX, 1.4e-3, sprintf('$%d/%d$', nnz(vecRem > vecMuList(idxMu)), numel(vecRem)), 'Interpreter', 'latex', ...
             'HorizontalAlignment', 'center', 'Color', sTheme.vecCut, 'FontSize', 10);
@@ -350,9 +358,9 @@ function sSummary = plotUnresolvedDOS(options)
             sBroad = loadResults(strDataDir, vecLaws(idxLaw), "twoContact");
             sSummary.(vecLaws(idxLaw)).sResultsTwoContact = sBroad;
             ax = subplot(1, 3, idxLaw); hold(ax, 'on');
-            plot(ax, [sNarrow.scalPressureTarget].*10.^(0.05*randn(1, numel(sNarrow))), 100*[sNarrow.scalNumRemoved]./[sNarrow.scalNi], 's', ...
+            plot(ax, [sNarrow.scalPressureTarget].*10.^(0.05*randn(sJitterStream, 1, numel(sNarrow))), 100*[sNarrow.scalNumRemoved]./[sNarrow.scalNi], 's', ...
                 'Color', sTheme.vecCut, 'MarkerFaceColor', sTheme.vecCut, 'MarkerSize', 6, 'DisplayName', '$\mathrm{unresolved\ (narrow)}$');
-            plot(ax, [sBroad.scalPressureTarget].*10.^(0.05*randn(1, numel(sBroad))), 100*[sBroad.scalNumRemoved]./[sBroad.scalNi], 'o', ...
+            plot(ax, [sBroad.scalPressureTarget].*10.^(0.05*randn(sJitterStream, 1, numel(sBroad))), 100*[sBroad.scalNumRemoved]./[sBroad.scalNi], 'o', ...
                 'Color', sTheme.vecKept, 'MarkerSize', 6, 'LineWidth', 1.1, 'DisplayName', '$z_i \le 2\ \mathrm{(broad)}$');
             vecPTick = 10.^(floor(log10(min([sBroad.scalPressureTarget]))):ceil(log10(max([sBroad.scalPressureTarget]))));
             set(ax, 'XScale', 'log', 'YScale', 'log', 'YLim', [0.05 150], 'XLim', [vecPTick(1)/1.5 vecPTick(end)*1.5], 'XTick', vecPTick, ...
