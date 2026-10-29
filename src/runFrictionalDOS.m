@@ -69,7 +69,7 @@ function runFrictionalDOS(strContactLaw, options)
         options.scalMaxSteps (1, 1) double {mustBePositive} = 3e6
     end
 
-    strRepoRoot = fileparts(fileparts(mfilename('fullpath')));
+    strRepoRoot = fileparts(fileparts(mfilename('fullpath'))); % climb twice up to add src too path
     addpath(fullfile(strRepoRoot, 'src'));
     strDataDir = options.strDataDir;
     if strDataDir == ""
@@ -82,11 +82,13 @@ function runFrictionalDOS(strContactLaw, options)
     strSpectraFile = fullfile(strLawDir, 'spectra.mat');
 
     % The run list: full grid, then the extra rows.
-    [matMuGrid, matPGrid, matSeedGrid] = ndgrid(options.vecMu, options.vecPressure, options.vecSeed);
+    [matMuGrid, matPGrid, matSeedGrid] = ndgrid(options.vecMu, options.vecPressure, options.vecSeed); % makes every combination of three vectors
     matRuns = [matMuGrid(:), matPGrid(:), matSeedGrid(:); options.matExtraRuns];
     matRuns = unique(matRuns, 'rows', 'stable');
 
     % Resume: keep the spectra already computed.
+    % check to see if the spectra.mat file already exsis, and if so,
+    % just append the new runs to it
     sRuns = struct([]);
     if isfile(strSpectraFile)
         sLoaded = load(strSpectraFile, 'sRuns');
