@@ -1,4 +1,4 @@
-function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing, dampingConstant, springConstant, mass, options)
+function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(sPacking, scalDampingConstant, scalSpringConstant, scalMass, sOptions)
 % Computes the system matrices K, Γ, and M for a granular packing (2D or 3D)
 % with Hooke's force law (default) or the Hertz(-Mindlin) force law (see
 % "contactLaw" below) described by the system of ODEs
@@ -38,6 +38,10 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 % Without friction the frictionless blocks k_n n n' (stiffness) and γ_n I
 % (damping) are used. By default neither K form includes a pre-stress term
 % (see "stressed" below).
+%
+% In the code, n_hat is vecNormalProjection, t_i and t_j are
+% vecTangentProjectionI/J, n_hat n_hat' is matNormalProjection, H_ii, H_jj,
+% H_ij are matStiffnessBlockII/JJ/IJ and the Γ blocks matDampingBlockII/JJ/IJ.
 %
 % ---------------------------------------------------------------------------
 % Optional physics for frictional eigenmodes near jamming
@@ -111,10 +115,10 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %    Henkes et al. is the complete linearization. Damping stays constant.
 %
 % Arguments:
-%     packing            Struct with the packing information
-%     dampingConstant    Damping parameter (normal damping γ_n with friction)
-%     springConstant     Hooke's spring constant (normal stiffness k_n with friction)
-%     mass               Mass of a particle of unit radius
+%     sPacking             Struct with the packing information
+%     scalDampingConstant  Damping parameter (normal damping γ_n with friction)
+%     scalSpringConstant   Hooke's spring constant (normal stiffness k_n with friction)
+%     scalMass             Mass of a particle of unit radius
 %
 % Options/Keyword Arguments:
 %     algorithm          Select algorithm for checking particle contacts:
@@ -128,10 +132,10 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %     friction           Include tangential (frictional) contacts and particle
 %                        rotation, giving 3N x 3N matrices (2D only)
 %     tangentialSpringConstant   Tangential stiffness k_t (friction only).
-%                                Defaults to springConstant/3, the
+%                                Defaults to scalSpringConstant/3, the
 %                                Cundall-Strack ratio used by pack.m
 %     tangentialDampingConstant  Tangential damping γ_t (friction only).
-%                                Defaults to dampingConstant
+%                                Defaults to scalDampingConstant
 %     stressed           Add the pre-stress term -(f_n/r)(I - n n') to K
 %     fricState          fricState struct saved by pack.m (per-contact forces)
 %     slipMobilized      Set k_t = 0 on fully mobilized contacts (needs
@@ -140,6 +144,10 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %                        (default 1e-6)
 %     contactLaw         "hooke" (default) or "hertz" (Hertz-Mindlin with
 %                        friction); see option 3 above
+%
+% The option names are the keyword interface used by the callers and the
+% tests, so they keep their names; inside the function they are read from the
+% struct sOptions.
 %
 % All logical options default to false.
 %
@@ -158,7 +166,7 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 %                                            fricState (empty without it)
 %
 % Example (frictional QEP, dense matrices):
-%     [matK, matGamma, matM] = matSpringDampMass(packing, gamma, K, 1, ...
+%     [matK, matGamma, matM] = matSpringDampMass(sPacking, scalGamma, scalK, 1, ...
 %         "periodic", true, "friction", true);
 %     [matPsi, vecLambda] = polyeig(matK, matGamma, matM);
 %     % solves (matK + lambda*matGamma + lambda^2*matM) * psi = 0
@@ -166,127 +174,131 @@ function [matSpring, matDamp, matMass, sContactInfo] = matSpringDampMass(packing
 % Example (undamped benchmark against Henkes et al., pack.m frictional run;
 % the one output file holds the backbone and its re-indexed fricState):
 %     sPack = load('2D_N1000_P0.001_Width32_Seed1_Friction.mat');
-%     [matK, ~, matM, info] = matSpringDampMass(sPack, 0, sPack.K, 1, ...
+%     [matK, ~, matM, sInfo] = matSpringDampMass(sPack, 0, sPack.K, 1, ...
 %         "periodic", true, "uniformMass", true, "friction", true, ...
 %         "stressed", true, "fricState", sPack.fricState, "slipMobilized", true);
 %     vecOmega2 = eig(full(matK), full(matM));   % Γ = 0, so lambda = ±i*omega
 
     arguments
-        packing                  (1, 1) struct
-        dampingConstant          (1, 1) double {mustBeReal} = 1.0
-        springConstant           (1, 1) double {mustBeReal} = 1.0
-        mass                     (1, 1) double {mustBeReal} = 1.0
-        options.algorithm        (1, 1) string = "cell"
-        options.periodic         (1, 1) logical = false % true ==> periodic boundary condition
-        options.sparseOutput     (1, 1) logical = false % true ==> output sparse matrices
-        options.uniformMass      (1, 1) logical = false % true ==> assume all particles are of the same mass
-        options.oldPackingFormat (1, 1) logical = false % true ==> assume packing is stored in the old format
-        options.friction         (1, 1) logical = false % true ==> tangential contacts + rotation (2D only)
-        options.tangentialSpringConstant  (1, 1) double {mustBeReal} = NaN % k_t; NaN ==> springConstant/3
-        options.tangentialDampingConstant (1, 1) double {mustBeReal} = NaN % γ_t; NaN ==> dampingConstant
-        options.stressed         (1, 1) logical = false % true ==> add pre-stress term -(f_n/r)(I - n n')
-        options.fricState        (1, 1) struct = struct() % pack.m fricState (per-contact forces)
-        options.slipMobilized    (1, 1) logical = false % true ==> k_t = 0 on fully mobilized contacts
-        options.mobilizationTol  (1, 1) double {mustBeNonnegative} = 1e-6 % m >= 1 - tol ==> fully mobilized
-        options.contactLaw       (1, 1) string {mustBeMember(options.contactLaw, ["hooke", "hertz"])} = "hooke"
+        sPacking                 (1, 1) struct
+        scalDampingConstant      (1, 1) double {mustBeReal} = 1.0
+        scalSpringConstant       (1, 1) double {mustBeReal} = 1.0
+        scalMass                 (1, 1) double {mustBeReal} = 1.0
+        sOptions.algorithm        (1, 1) string = "cell"
+        sOptions.periodic         (1, 1) logical = false % true ==> periodic boundary condition
+        sOptions.sparseOutput     (1, 1) logical = false % true ==> output sparse matrices
+        sOptions.uniformMass      (1, 1) logical = false % true ==> assume all particles are of the same mass
+        sOptions.oldPackingFormat (1, 1) logical = false % true ==> assume packing is stored in the old format
+        sOptions.friction         (1, 1) logical = false % true ==> tangential contacts + rotation (2D only)
+        sOptions.tangentialSpringConstant  (1, 1) double {mustBeReal} = NaN % k_t; NaN ==> scalSpringConstant/3
+        sOptions.tangentialDampingConstant (1, 1) double {mustBeReal} = NaN % γ_t; NaN ==> scalDampingConstant
+        sOptions.stressed         (1, 1) logical = false % true ==> add pre-stress term -(f_n/r)(I - n n')
+        sOptions.fricState        (1, 1) struct = struct() % pack.m fricState (per-contact forces)
+        sOptions.slipMobilized    (1, 1) logical = false % true ==> k_t = 0 on fully mobilized contacts
+        sOptions.mobilizationTol  (1, 1) double {mustBeNonnegative} = 1e-6 % m >= 1 - tol ==> fully mobilized
+        sOptions.contactLaw       (1, 1) string {mustBeMember(sOptions.contactLaw, ["hooke", "hertz"])} = "hooke"
     end
 
     % Grab the data out of the packing.
-    [dim, N, ~, positions, radii, boxDims] = getPackingData(packing, options.oldPackingFormat);
-    radii = radii(:);
+    [scalDim, scalNumParticles, ~, matPositions, vecRadii, vecBoxDims] = getPackingData(sPacking, sOptions.oldPackingFormat);
+    vecRadii = vecRadii(:);
 
-    % Contact constants and degrees of freedom per particle (f).  With
-    % friction each particle also has a rotation theta, so f = dim + 1.
-    consts = struct('kn', springConstant, 'kt', 0, 'gn', dampingConstant, 'gt', 0, 'friction', options.friction);
-    if (options.friction)
-        if (dim ~= 2)
+    % Contact constants and degrees of freedom per particle.  With friction
+    % each particle also has a rotation theta, so there are scalDim + 1.
+    sConsts = struct('scalKn', scalSpringConstant, 'scalKt', 0, 'scalGn', scalDampingConstant, 'scalGt', 0, ...
+        'boolFriction', sOptions.friction);
+    if (sOptions.friction)
+        if (scalDim ~= 2)
             error("matSpringDampMass:Friction3DNotSupported", "friction = true is 2D only.");
         end
-        f = dim + 1;
-        consts.kt = options.tangentialSpringConstant;
-        if (isnan(consts.kt))
-            consts.kt = springConstant/3;
+        scalDofPerParticle = scalDim + 1;
+        sConsts.scalKt = sOptions.tangentialSpringConstant;
+        if (isnan(sConsts.scalKt))
+            sConsts.scalKt = scalSpringConstant/3;
         end
-        consts.gt = options.tangentialDampingConstant;
-        if (isnan(consts.gt))
-            consts.gt = dampingConstant;
+        sConsts.scalGt = sOptions.tangentialDampingConstant;
+        if (isnan(sConsts.scalGt))
+            sConsts.scalGt = scalDampingConstant;
         end
     else
-        f = dim;
+        scalDofPerParticle = scalDim;
     end
-    dof = f*N;
+    scalNumDof = scalDofPerParticle*scalNumParticles;
 
     % Pre-stress term, slipping (fully mobilized) contacts and contact law.
-    consts.boolStressed = options.stressed;
-    consts.boolSlipMobilized = options.slipMobilized;
-    consts.boolUseFricState = ~isempty(fieldnames(options.fricState));
-    consts.boolHertz = (options.contactLaw == "hertz");
-    consts.scalKtOverKn = consts.kt/consts.kn;   % Mindlin: k_t = (k_t0/K) k_n(delta)
-    if (options.slipMobilized && ~(options.friction && consts.boolUseFricState))
+    sConsts.boolStressed = sOptions.stressed;
+    sConsts.boolSlipMobilized = sOptions.slipMobilized;
+    sConsts.boolUseFricState = ~isempty(fieldnames(sOptions.fricState));
+    sConsts.boolHertz = (sOptions.contactLaw == "hertz");
+    sConsts.scalKtOverKn = sConsts.scalKt/sConsts.scalKn;   % Mindlin: k_t = (k_t0/K) k_n(delta)
+    if (sOptions.slipMobilized && ~(sOptions.friction && sConsts.boolUseFricState))
         error("matSpringDampMass:SlipNeedsFricState", ...
             "slipMobilized = true needs friction = true and the fricState saved by pack.m.");
     end
     vecMobilization = [];
-    if (consts.boolUseFricState)
-        [consts.matMobilized, consts.matInFricState, vecMobilization] = ...
-            mobilizedContacts(options.fricState, N, radii, options.mobilizationTol);
+    if (sConsts.boolUseFricState)
+        [sConsts.matMobilized, sConsts.matInFricState, vecMobilization] = ...
+            mobilizedContacts(sOptions.fricState, scalNumParticles, vecRadii, sOptions.mobilizationTol);
     end
 
     % Which particles touch the left and right walls (2D)?
-    if ((dim == 2) && ~options.periodic)
-        maskLeftWall  = positions(:, 1) < radii;
-        maskRightWall = positions(:, 1) > boxDims(1) - radii;
+    if ((scalDim == 2) && ~sOptions.periodic)
+        vecBoolLeftWall  = matPositions(:, 1) < vecRadii;
+        vecBoolRightWall = matPositions(:, 1) > vecBoxDims(1) - vecRadii;
     end
 
     % Build the stiffness and damping matrices.
-    switch (options.algorithm)
+    switch (sOptions.algorithm)
     case "cell"
-        [matSpring, matDamp, sCounts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options);
+        [matSpring, matDamp, sCounts] = buildMatricesCell(scalNumParticles, scalDim, scalDofPerParticle, scalNumDof, ...
+            matPositions, vecRadii, vecBoxDims, sConsts, sOptions);
     case "particle"
-        [matSpring, matDamp, sCounts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options);
+        [matSpring, matDamp, sCounts] = buildMatricesParticle(scalNumParticles, scalDim, scalDofPerParticle, scalNumDof, ...
+            matPositions, vecRadii, vecBoxDims, sConsts, sOptions);
     otherwise
         error("Not implemented.");
     end
 
     % Add entries for wall contacts (2D, translational DOFs only).
-    if ((dim == 2) && ~options.periodic)
-        for (i = 1:1:N)
-            if (maskLeftWall(i) || maskRightWall(i))
-                dofs_i = (f*(i - 1) + 1):(f*(i - 1) + dim);
-                matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + springConstant*eye(dim);
+    if ((scalDim == 2) && ~sOptions.periodic)
+        for (idxParticle = 1:1:scalNumParticles)
+            if (vecBoolLeftWall(idxParticle) || vecBoolRightWall(idxParticle))
+                vecDofsParticle = (scalDofPerParticle*(idxParticle - 1) + 1):(scalDofPerParticle*(idxParticle - 1) + scalDim);
+                matSpring(vecDofsParticle, vecDofsParticle) = matSpring(vecDofsParticle, vecDofsParticle) + scalSpringConstant*eye(scalDim);
             end
         end
     end
 
     % Build the mass matrix.
-    if (options.uniformMass)
-        vecMass = mass*ones(N, 1);
+    if (sOptions.uniformMass)
+        vecMass = scalMass*ones(scalNumParticles, 1);
     else
-        V = pi^(dim/2)/gamma(dim/2 + 1); % Volume of unit ball in R^dim
-        vecMass = (mass*V)*radii.^dim;
+        scalUnitBallVolume = pi^(scalDim/2)/gamma(scalDim/2 + 1); % Volume of unit ball in R^dim
+        vecMass = (scalMass*scalUnitBallVolume)*vecRadii.^scalDim;
     end
-    if (options.friction)
-        vecInertia = 0.5*vecMass.*radii.^2; % Moment of inertia of a uniform disk
-        vecMassDiag = reshape([vecMass.' ; vecMass.' ; vecInertia.'], dof, 1);
+    if (sOptions.friction)
+        vecInertia = 0.5*vecMass.*vecRadii.^2; % Moment of inertia of a uniform disk
+        vecMassDiag = reshape([vecMass.' ; vecMass.' ; vecInertia.'], scalNumDof, 1);
     else
-        vecMassDiag = reshape(repmat(vecMass.', dim, 1), dof, 1);
+        vecMassDiag = reshape(repmat(vecMass.', scalDim, 1), scalNumDof, 1);
     end
-    if (options.sparseOutput)
-        matMass = spdiags(vecMassDiag, 0, dof, dof);
+    if (sOptions.sparseOutput)
+        matMass = spdiags(vecMassDiag, 0, scalNumDof, scalNumDof);
     else
         matMass = diag(vecMassDiag);
     end
 
-    % Summary of the contact network K was built from.
+    % Summary of the contact network K was built from.  The field names are
+    % read by runFrictionalDOS, runUnresolvedDOS and the tests.
     sContactInfo = struct();
     sContactInfo.numContacts = sum(sCounts.vecNumContacts)/2;
     sContactInfo.vecNumContacts = sCounts.vecNumContacts;
-    if (consts.boolUseFricState)
-        sContactInfo.numMobilized = sCounts.numMobilized;
-        sContactInfo.numNotInFricState = sCounts.numNotInFricState;
-        if (sCounts.numNotInFricState > 0)
+    if (sConsts.boolUseFricState)
+        sContactInfo.numMobilized = sCounts.scalNumMobilized;
+        sContactInfo.numNotInFricState = sCounts.scalNumNotInFricState;
+        if (sCounts.scalNumNotInFricState > 0)
             warning("matSpringDampMass:ContactsNotInFricState", ...
-                "%d contacts are not in fricState and are treated as not mobilized.", sCounts.numNotInFricState);
+                "%d contacts are not in fricState and are treated as not mobilized.", sCounts.scalNumNotInFricState);
         end
     else
         sContactInfo.numMobilized = NaN;
@@ -297,105 +309,110 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function [matSpring, matDamp] = allocateMatrices(dof, dim, sparse)
-    if (sparse)
+function [matSpring, matDamp] = allocateMatrices(scalNumDof, boolSparse)
+    if (boolSparse)
         % TODO:  Do these over-allocate?
-        matSpring = spalloc(dof, dof, ceil(0.005*(dof^2)));
-        matDamp   = spalloc(dof, dof, ceil(0.005*(dof^2)));
+        matSpring = spalloc(scalNumDof, scalNumDof, ceil(0.005*(scalNumDof^2)));
+        matDamp   = spalloc(scalNumDof, scalNumDof, ceil(0.005*(scalNumDof^2)));
     else
-        matSpring = zeros(dof, dof);
-        matDamp   = zeros(dof, dof);
+        matSpring = zeros(scalNumDof, scalNumDof);
+        matDamp   = zeros(scalNumDof, scalNumDof);
     end
 end
 
-function [matSpring, matDamp, sCounts] = buildMatricesCell(N, dim, f, dof, positions, radii, boxDims, consts, options)
+function [matSpring, matDamp, sCounts] = buildMatricesCell(scalNumParticles, scalDim, scalDofPerParticle, scalNumDof, ...
+        matPositions, vecRadii, vecBoxDims, sConsts, sOptions)
     % Pre-allocate the outputs.
-    [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
-    sCounts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
+    [matSpring, matDamp] = allocateMatrices(scalNumDof, sOptions.sparseOutput);
+    sCounts = struct('vecNumContacts', zeros(scalNumParticles, 1), 'scalNumMobilized', 0, 'scalNumNotInFricState', 0);
 
     % Data for the cell-based method for checking particle contacts.
-    % The cells must tile the box exactly (cellCounts.*cellWidths == boxDims) so
-    % that the periodic cell wrap matches the minimum-image wrap. Recomputing the
-    % count as ceil(boxDims./cellWidths) is a floating-point trap: boxDims./
-    % (boxDims./k) can come out as k + 2e-15, which ceil turns into k + 1 cells
-    % that no longer tile the box, and contacts across the boundary are dropped.
-    baseCellWidth    = 4.0*max(radii);                         % Nominal width of each cell
-    cellCounts       = max(round(boxDims/baseCellWidth), 1);   % Number of cells in each dimension
-    cellWidths       = boxDims./cellCounts;                    % Actual cell widths (tile the box)
-    particlesToCells = min(max(ceil(positions./cellWidths.'), 1), cellCounts.'); % ith row: cell numbers of particle i
-    cellsToParticles = cell(cellCounts.');                     % (i, j, k) entry lists particles in cell (i, j, k)
+    % The cells must tile the box exactly (vecCellCounts.*vecCellWidths == vecBoxDims)
+    % so that the periodic cell wrap matches the minimum-image wrap. Recomputing
+    % the count as ceil(vecBoxDims./vecCellWidths) is a floating-point trap:
+    % vecBoxDims./(vecBoxDims./k) can come out as k + 2e-15, which ceil turns into
+    % k + 1 cells that no longer tile the box, and contacts across the boundary
+    % are dropped.
+    scalBaseCellWidth = 4.0*max(vecRadii);                              % Nominal width of each cell
+    vecCellCounts     = max(round(vecBoxDims/scalBaseCellWidth), 1);    % Number of cells in each dimension
+    vecCellWidths     = vecBoxDims./vecCellCounts;                      % Actual cell widths (tile the box)
+    matParticleToCell = min(max(ceil(matPositions./vecCellWidths.'), 1), vecCellCounts.'); % row p: cell subscripts of particle p
+    cellCellToParticles = cell(vecCellCounts.');                        % (a, b, c) entry lists the particles in cell (a, b, c)
 
-    % Build the map from cell numbers the list of particles each cell contains.
-    ii = cell(1, dim);
-    for (I = 1:prod(cellCounts))
-        [ii{:}] = ind2sub(cellCounts, I);
-        cellsToParticles{ii{:}} = find(all(particlesToCells == [ii{:}], 2)).';
+    % Build the map from cell subscripts to the list of particles each cell contains.
+    cellCellSubscript = cell(1, scalDim);
+    for (idxCell = 1:prod(vecCellCounts))
+        [cellCellSubscript{:}] = ind2sub(vecCellCounts, idxCell);
+        cellCellToParticles{cellCellSubscript{:}} = find(all(matParticleToCell == [cellCellSubscript{:}], 2)).';
     end
 
     % Loop over all cells looking for contacts between particles in this cell
     % and in adjacent ones.
-    for (I = 1:prod(cellCounts))
-        [ii{:}] = ind2sub(cellCounts, I);
+    for (idxCell = 1:prod(vecCellCounts))
+        [cellCellSubscript{:}] = ind2sub(vecCellCounts, idxCell);
 
         % Get a list of all the particles that are in either this cell or a
         % neighboring one.  The call to unique() eliminates duplicates in the
         % event that the cell count is very low.
         %
         % TODO:  This is not very efficient.
-        neighboringParticles = cell(1, 3^dim);
-        S = cell(1, dim);
-        for (n = 1:1:(3^dim))
-            [S{:}] = ind2sub(3*ones(1, dim), n);
-            s = cell2mat(S) - 2;
+        cellNeighborLists = cell(1, 3^scalDim);
+        cellStencilSubscript = cell(1, scalDim);
+        for (idxStencil = 1:1:(3^scalDim))
+            [cellStencilSubscript{:}] = ind2sub(3*ones(1, scalDim), idxStencil);
+            vecStencilOffset = cell2mat(cellStencilSubscript) - 2;
 
-            if (options.periodic)
-                jj = mat2cell(mod(cell2mat(ii) + s - 1, cellCounts.') + 1, 1, ones(1, dim));
+            if (sOptions.periodic)
+                cellNeighborCellSubscript = mat2cell(mod(cell2mat(cellCellSubscript) + vecStencilOffset - 1, vecCellCounts.') + 1, ...
+                    1, ones(1, scalDim));
             else
                 error('Not implemented.');
             end
 
-            neighboringParticles(n) = cellsToParticles(jj{:});
+            cellNeighborLists(idxStencil) = cellCellToParticles(cellNeighborCellSubscript{:});
         end
-        neighboringParticles = unique(horzcat(neighboringParticles{:}));
+        vecNeighborParticles = unique(horzcat(cellNeighborLists{:}));
 
         % Check contacts for all particles in this cell.
-        for (i = cellsToParticles{I})
-            for (j = neighboringParticles)
-                if (j == i)
+        for (idxParticleI = cellCellToParticles{idxCell})
+            for (idxParticleJ = vecNeighborParticles)
+                if (idxParticleJ == idxParticleI)
                     continue;
                 end
 
-                % Compute distance between particles i and j.
-                dX = (positions(i, :) - positions(j, :)).';
-                if (options.periodic)
-                    dX = dX - round(dX./boxDims).*boxDims;
+                % Separation vector from particle j to particle i.
+                vecSeparation = (matPositions(idxParticleI, :) - matPositions(idxParticleJ, :)).';
+                if (sOptions.periodic)
+                    vecSeparation = vecSeparation - round(vecSeparation./vecBoxDims).*vecBoxDims;
                 end
-                r = norm(dX);
+                scalCenterDistance = norm(vecSeparation);
 
                 % If the particles are in contact, add terms for the contact forces.
-                if (r < radii(i) + radii(j))
-                    nhat = -dX/r; % Unit normal pointing from i to j
-                    [boolSlip, boolKnown] = lookupContact(i, j, consts);
-                    [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, radii(i), radii(j), r, dim, consts, boolSlip);
+                if (scalCenterDistance < vecRadii(idxParticleI) + vecRadii(idxParticleJ))
+                    vecUnitNormal = -vecSeparation/scalCenterDistance; % Unit normal pointing from i to j
+                    [boolSlip, boolKnown] = lookupContact(idxParticleI, idxParticleJ, sConsts);
+                    [matStiffnessBlockII, matStiffnessBlockJJ, matStiffnessBlockIJ, ...
+                        matDampingBlockII, matDampingBlockJJ, matDampingBlockIJ] = contactBlocks(vecUnitNormal, ...
+                        vecRadii(idxParticleI), vecRadii(idxParticleJ), scalCenterDistance, scalDim, sConsts, boolSlip);
 
-                    dofs_i = (f*(i - 1) + 1):(f*i);
-                    dofs_j = (f*(j - 1) + 1):(f*j);
+                    vecDofsI = (scalDofPerParticle*(idxParticleI - 1) + 1):(scalDofPerParticle*idxParticleI);
+                    vecDofsJ = (scalDofPerParticle*(idxParticleJ - 1) + 1):(scalDofPerParticle*idxParticleJ);
 
-                    matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Hii;
-                    matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Hjj;
-                    matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Hij;
-                    matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Hij.';
+                    matSpring(vecDofsI, vecDofsI) = matSpring(vecDofsI, vecDofsI) + matStiffnessBlockII;
+                    matSpring(vecDofsJ, vecDofsJ) = matSpring(vecDofsJ, vecDofsJ) + matStiffnessBlockJJ;
+                    matSpring(vecDofsI, vecDofsJ) = matSpring(vecDofsI, vecDofsJ) - matStiffnessBlockIJ;
+                    matSpring(vecDofsJ, vecDofsI) = matSpring(vecDofsJ, vecDofsI) - matStiffnessBlockIJ.';
 
-                    matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Gii;
-                    matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Gjj;
-                    matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Gij;
-                    matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Gij.';
+                    matDamp(vecDofsI, vecDofsI) = matDamp(vecDofsI, vecDofsI) + matDampingBlockII;
+                    matDamp(vecDofsJ, vecDofsJ) = matDamp(vecDofsJ, vecDofsJ) + matDampingBlockJJ;
+                    matDamp(vecDofsI, vecDofsJ) = matDamp(vecDofsI, vecDofsJ) - matDampingBlockIJ;
+                    matDamp(vecDofsJ, vecDofsI) = matDamp(vecDofsJ, vecDofsI) - matDampingBlockIJ.';
 
                     % Each contact is visited once from each side, so only
                     % particle i is counted here and the totals are halved.
-                    sCounts.vecNumContacts(i) = sCounts.vecNumContacts(i) + 1;
-                    sCounts.numMobilized      = sCounts.numMobilized + boolSlip/2;
-                    sCounts.numNotInFricState = sCounts.numNotInFricState + (consts.boolUseFricState && ~boolKnown)/2;
+                    sCounts.vecNumContacts(idxParticleI) = sCounts.vecNumContacts(idxParticleI) + 1;
+                    sCounts.scalNumMobilized      = sCounts.scalNumMobilized + boolSlip/2;
+                    sCounts.scalNumNotInFricState = sCounts.scalNumNotInFricState + (sConsts.boolUseFricState && ~boolKnown)/2;
                 end
             end
         end
@@ -406,175 +423,178 @@ function [matSpring, matDamp, sCounts] = buildMatricesCell(N, dim, f, dof, posit
     matDamp = matDamp/2.0;
 end
 
-function [matSpring, matDamp, sCounts] = buildMatricesParticle(N, dim, f, dof, positions, radii, boxDims, consts, options)
+function [matSpring, matDamp, sCounts] = buildMatricesParticle(scalNumParticles, scalDim, scalDofPerParticle, scalNumDof, ...
+        matPositions, vecRadii, vecBoxDims, sConsts, sOptions)
     % Pre-allocate the outputs.
-    [matSpring, matDamp] = allocateMatrices(dof, dim, options.sparseOutput);
-    sCounts = struct('vecNumContacts', zeros(N, 1), 'numMobilized', 0, 'numNotInFricState', 0);
+    [matSpring, matDamp] = allocateMatrices(scalNumDof, sOptions.sparseOutput);
+    sCounts = struct('vecNumContacts', zeros(scalNumParticles, 1), 'scalNumMobilized', 0, 'scalNumNotInFricState', 0);
 
     % Check for contact between each pair of particles to generate the
     % stiffness and damping matrices.
-    for (i = 1:1:N)
-        for (j = (i + 1):N)
-            % Compute distance between particles i and j.
-            dX = (positions(i, :) - positions(j, :)).';
-            if (options.periodic)
-                dX = dX - round(dX./boxDims).*boxDims;
+    for (idxParticleI = 1:1:scalNumParticles)
+        for (idxParticleJ = (idxParticleI + 1):scalNumParticles)
+            % Separation vector from particle j to particle i.
+            vecSeparation = (matPositions(idxParticleI, :) - matPositions(idxParticleJ, :)).';
+            if (sOptions.periodic)
+                vecSeparation = vecSeparation - round(vecSeparation./vecBoxDims).*vecBoxDims;
             end
-            r = norm(dX);
+            scalCenterDistance = norm(vecSeparation);
 
             % If the particles are in contact, add terms for the contact forces.
-            if (r < radii(i) + radii(j))
-                nhat = -dX/r; % Unit normal pointing from i to j
-                [boolSlip, boolKnown] = lookupContact(i, j, consts);
-                [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, radii(i), radii(j), r, dim, consts, boolSlip);
+            if (scalCenterDistance < vecRadii(idxParticleI) + vecRadii(idxParticleJ))
+                vecUnitNormal = -vecSeparation/scalCenterDistance; % Unit normal pointing from i to j
+                [boolSlip, boolKnown] = lookupContact(idxParticleI, idxParticleJ, sConsts);
+                [matStiffnessBlockII, matStiffnessBlockJJ, matStiffnessBlockIJ, ...
+                    matDampingBlockII, matDampingBlockJJ, matDampingBlockIJ] = contactBlocks(vecUnitNormal, ...
+                    vecRadii(idxParticleI), vecRadii(idxParticleJ), scalCenterDistance, scalDim, sConsts, boolSlip);
 
-                dofs_i = (f*(i - 1) + 1):(f*i);
-                dofs_j = (f*(j - 1) + 1):(f*j);
+                vecDofsI = (scalDofPerParticle*(idxParticleI - 1) + 1):(scalDofPerParticle*idxParticleI);
+                vecDofsJ = (scalDofPerParticle*(idxParticleJ - 1) + 1):(scalDofPerParticle*idxParticleJ);
 
-                matSpring(dofs_i, dofs_i) = matSpring(dofs_i, dofs_i) + Hii;
-                matSpring(dofs_j, dofs_j) = matSpring(dofs_j, dofs_j) + Hjj;
-                matSpring(dofs_i, dofs_j) = matSpring(dofs_i, dofs_j) - Hij;
-                matSpring(dofs_j, dofs_i) = matSpring(dofs_j, dofs_i) - Hij.';
+                matSpring(vecDofsI, vecDofsI) = matSpring(vecDofsI, vecDofsI) + matStiffnessBlockII;
+                matSpring(vecDofsJ, vecDofsJ) = matSpring(vecDofsJ, vecDofsJ) + matStiffnessBlockJJ;
+                matSpring(vecDofsI, vecDofsJ) = matSpring(vecDofsI, vecDofsJ) - matStiffnessBlockIJ;
+                matSpring(vecDofsJ, vecDofsI) = matSpring(vecDofsJ, vecDofsI) - matStiffnessBlockIJ.';
 
-                matDamp(dofs_i, dofs_i) = matDamp(dofs_i, dofs_i) + Gii;
-                matDamp(dofs_j, dofs_j) = matDamp(dofs_j, dofs_j) + Gjj;
-                matDamp(dofs_i, dofs_j) = matDamp(dofs_i, dofs_j) - Gij;
-                matDamp(dofs_j, dofs_i) = matDamp(dofs_j, dofs_i) - Gij.';
+                matDamp(vecDofsI, vecDofsI) = matDamp(vecDofsI, vecDofsI) + matDampingBlockII;
+                matDamp(vecDofsJ, vecDofsJ) = matDamp(vecDofsJ, vecDofsJ) + matDampingBlockJJ;
+                matDamp(vecDofsI, vecDofsJ) = matDamp(vecDofsI, vecDofsJ) - matDampingBlockIJ;
+                matDamp(vecDofsJ, vecDofsI) = matDamp(vecDofsJ, vecDofsI) - matDampingBlockIJ.';
 
-                sCounts.vecNumContacts(i) = sCounts.vecNumContacts(i) + 1;
-                sCounts.vecNumContacts(j) = sCounts.vecNumContacts(j) + 1;
-                sCounts.numMobilized      = sCounts.numMobilized + boolSlip;
-                sCounts.numNotInFricState = sCounts.numNotInFricState + (consts.boolUseFricState && ~boolKnown);
+                sCounts.vecNumContacts(idxParticleI) = sCounts.vecNumContacts(idxParticleI) + 1;
+                sCounts.vecNumContacts(idxParticleJ) = sCounts.vecNumContacts(idxParticleJ) + 1;
+                sCounts.scalNumMobilized      = sCounts.scalNumMobilized + boolSlip;
+                sCounts.scalNumNotInFricState = sCounts.scalNumNotInFricState + (sConsts.boolUseFricState && ~boolKnown);
             end
         end
     end
 end
 
-function [Hii, Hjj, Hij, Gii, Gjj, Gij] = contactBlocks(nhat, scalRadiusI, scalRadiusJ, scalDist, dim, consts, boolSlip)
-% Stiffness (H) and damping (G) blocks of one contact (i, j), with nhat the
-% unit normal pointing from i to j and scalDist the center distance.  The
-% contact contributes
-%     [ H_ii  -H_ij ; -H_ij'  H_jj ]
+function [matStiffnessBlockII, matStiffnessBlockJJ, matStiffnessBlockIJ, matDampingBlockII, matDampingBlockJJ, matDampingBlockIJ] = ...
+        contactBlocks(vecUnitNormal, scalRadiusI, scalRadiusJ, scalCenterDistance, scalDim, sConsts, boolSlip)
+% Stiffness and damping blocks of one contact (i, j), with vecUnitNormal the
+% unit normal pointing from i to j and scalCenterDistance the center distance.
+% The contact contributes
+%     [ matStiffnessBlockII  -matStiffnessBlockIJ ; -matStiffnessBlockIJ'  matStiffnessBlockJJ ]
 % to the (i, j) rows/columns of K, and likewise for Γ.  boolSlip marks a fully
 % mobilized contact, which loses its tangential spring when slipMobilized is on.
 
     % Contact stiffnesses and normal force of the contact law.
-    if (consts.boolHertz)
+    if (sConsts.boolHertz)
         % Hertz(-Mindlin), as in pack.m: f_n = (4/3) K sqrt(R_eff) delta^(3/2),
         % k_n = 2 K sqrt(R_eff delta), k_t = (k_t0/K) k_n.
-        scalOverlap   = scalRadiusI + scalRadiusJ - scalDist;
+        scalOverlap   = scalRadiusI + scalRadiusJ - scalCenterDistance;
         scalRadiusEff = scalRadiusI*scalRadiusJ/(scalRadiusI + scalRadiusJ);
-        scalKn = 2*consts.kn*sqrt(scalRadiusEff*scalOverlap);
-        scalFn = (4/3)*consts.kn*sqrt(scalRadiusEff)*scalOverlap^(3/2);
-        scalKt = consts.scalKtOverKn*scalKn;
+        scalKn = 2*sConsts.scalKn*sqrt(scalRadiusEff*scalOverlap);
+        scalFn = (4/3)*sConsts.scalKn*sqrt(scalRadiusEff)*scalOverlap^(3/2);
+        scalKt = sConsts.scalKtOverKn*scalKn;
     else
-        scalKn = consts.kn;
-        scalFn = consts.kn*(scalRadiusI + scalRadiusJ - scalDist);
-        scalKt = consts.kt;
+        scalKn = sConsts.scalKn;
+        scalFn = sConsts.scalKn*(scalRadiusI + scalRadiusJ - scalCenterDistance);
+        scalKt = sConsts.scalKt;
     end
 
-    if (consts.friction)
+    if (sConsts.boolFriction)
         % Projection vectors on (x, y, theta).  t = z x n, and the third
         % entries are the lever arms that turn sliding into spin.
-        n  = [nhat ; 0];
-        ti = [-nhat(2) ; nhat(1) ;  scalRadiusI];
-        tj = [-nhat(2) ; nhat(1) ; -scalRadiusJ];
-        nn = n*n.';
+        vecNormalProjection    = [vecUnitNormal ; 0];
+        vecTangentProjectionI  = [-vecUnitNormal(2) ; vecUnitNormal(1) ;  scalRadiusI];
+        vecTangentProjectionJ  = [-vecUnitNormal(2) ; vecUnitNormal(1) ; -scalRadiusJ];
+        matNormalProjection    = vecNormalProjection*vecNormalProjection.';
 
-        if (consts.boolSlipMobilized && boolSlip)
+        if (sConsts.boolSlipMobilized && boolSlip)
             scalKt = 0; % slipping contact: no tangential spring (Henkes et al.)
         end
 
-        Hii = scalKn*nn + scalKt*(ti*ti.');
-        Hjj = scalKn*nn + scalKt*(tj*tj.');
-        Hij = scalKn*nn + scalKt*(ti*tj.');
+        matStiffnessBlockII = scalKn*matNormalProjection + scalKt*(vecTangentProjectionI*vecTangentProjectionI.');
+        matStiffnessBlockJJ = scalKn*matNormalProjection + scalKt*(vecTangentProjectionJ*vecTangentProjectionJ.');
+        matStiffnessBlockIJ = scalKn*matNormalProjection + scalKt*(vecTangentProjectionI*vecTangentProjectionJ.');
 
-        Gii = consts.gn*nn + consts.gt*(ti*ti.');
-        Gjj = consts.gn*nn + consts.gt*(tj*tj.');
-        Gij = consts.gn*nn + consts.gt*(ti*tj.');
+        matDampingBlockII = sConsts.scalGn*matNormalProjection + sConsts.scalGt*(vecTangentProjectionI*vecTangentProjectionI.');
+        matDampingBlockJJ = sConsts.scalGn*matNormalProjection + sConsts.scalGt*(vecTangentProjectionJ*vecTangentProjectionJ.');
+        matDampingBlockIJ = sConsts.scalGn*matNormalProjection + sConsts.scalGt*(vecTangentProjectionI*vecTangentProjectionJ.');
     else
-        Hii = scalKn*(nhat*nhat.');
-        Hjj = Hii;
-        Hij = Hii;
+        matStiffnessBlockII = scalKn*(vecUnitNormal*vecUnitNormal.');
+        matStiffnessBlockJJ = matStiffnessBlockII;
+        matStiffnessBlockIJ = matStiffnessBlockII;
 
-        Gii = consts.gn*eye(dim);
-        Gjj = Gii;
-        Gij = Gii;
+        matDampingBlockII = sConsts.scalGn*eye(scalDim);
+        matDampingBlockJJ = matDampingBlockII;
+        matDampingBlockIJ = matDampingBlockII;
     end
 
-    if (consts.boolStressed)
+    if (sConsts.boolStressed)
         % Pre-stress term V'(r)/r (I - n n') with V'(r) = -f_n, the normal force
         % of the contact law.  It only involves the translational DOFs.
-        matPreStress = -(scalFn/scalDist)*(eye(dim) - nhat*nhat.');
-        if (consts.friction)
+        matPreStress = -(scalFn/scalCenterDistance)*(eye(scalDim) - vecUnitNormal*vecUnitNormal.');
+        if (sConsts.boolFriction)
             matPreStress = blkdiag(matPreStress, 0);
         end
-        Hii = Hii + matPreStress;
-        Hjj = Hjj + matPreStress;
-        Hij = Hij + matPreStress;
+        matStiffnessBlockII = matStiffnessBlockII + matPreStress;
+        matStiffnessBlockJJ = matStiffnessBlockJJ + matPreStress;
+        matStiffnessBlockIJ = matStiffnessBlockIJ + matPreStress;
     end
 end
 
-function [boolSlip, boolKnown] = lookupContact(i, j, consts)
+function [boolSlip, boolKnown] = lookupContact(idxParticleI, idxParticleJ, sConsts)
 % Is contact (i, j) fully mobilized, and is it listed in fricState at all?
-    if (~consts.boolUseFricState)
+    if (~sConsts.boolUseFricState)
         boolSlip  = false;
         boolKnown = false;
         return;
     end
-    a = min(i, j);
-    b = max(i, j);
-    boolKnown = full(consts.matInFricState(a, b));
-    boolSlip  = full(consts.matMobilized(a, b));
+    idxLow  = min(idxParticleI, idxParticleJ);
+    idxHigh = max(idxParticleI, idxParticleJ);
+    boolKnown = full(sConsts.matInFricState(idxLow, idxHigh));
+    boolSlip  = full(sConsts.matMobilized(idxLow, idxHigh));
 end
 
-function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(fricState, N, radii, scalTol)
+function [matMobilized, matInFricState, vecMobilization] = mobilizedContacts(sFricState, scalNumParticles, vecRadii, scalTol)
 % Sparse N x N logical maps (upper triangle, i < j) of the contacts listed in
 % pack.m's fricState and of the fully mobilized ones, m = |f_t|/(mu f_n) >= 1 - tol.
-    if ((fricState.N ~= N) || (max(abs(fricState.vecRadius(:) - radii)) > 1e-12*max(radii)))
+    if ((sFricState.N ~= scalNumParticles) || (max(abs(sFricState.vecRadius(:) - vecRadii)) > 1e-12*max(vecRadii)))
         error("matSpringDampMass:FricStateMismatch", ...
             "fricState does not match the packing. Pass pack.m's frictional file (backbone) with its top-level fricState, or sFullState with sFullState.fricState.");
     end
-    vecI = min(fricState.vecContactNN(:), fricState.vecContactMM(:));
-    vecJ = max(fricState.vecContactNN(:), fricState.vecContactMM(:));
-    if (fricState.mu > 0)
-        vecMobilization = abs(fricState.vecFt(:))./(fricState.mu*abs(fricState.vecFn(:)));
+    vecI = min(sFricState.vecContactNN(:), sFricState.vecContactMM(:));
+    vecJ = max(sFricState.vecContactNN(:), sFricState.vecContactMM(:));
+    if (sFricState.mu > 0)
+        vecMobilization = abs(sFricState.vecFt(:))./(sFricState.mu*abs(sFricState.vecFn(:)));
     else
         vecMobilization = ones(numel(vecI), 1); % mu = 0: no contact can hold a tangential force
     end
     vecBoolMobilized = vecMobilization >= 1 - scalTol;
-    matInFricState = sparse(vecI, vecJ, true, N, N);
-    matMobilized   = sparse(vecI(vecBoolMobilized), vecJ(vecBoolMobilized), true, N, N);
+    matInFricState = sparse(vecI, vecJ, true, scalNumParticles, scalNumParticles);
+    matMobilized   = sparse(vecI(vecBoolMobilized), vecJ(vecBoolMobilized), true, scalNumParticles, scalNumParticles);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function [dim, N, dof, positions, radii, boxDims] = getPackingData(packing, oldPackingFormat)
-    if (oldPackingFormat)              % Old packing format
-        if (isfield(packing, 'z'))
-            dim = 3;
-            positions = [packing.x.' packing.y.' packing.z.'];
-            boxDims   = [packing.Lx ; packing.Ly ; packing.Lz];
+function [scalDim, scalNumParticles, scalNumDof, matPositions, vecRadii, vecBoxDims] = getPackingData(sPacking, boolOldPackingFormat)
+    if (boolOldPackingFormat)          % Old packing format
+        if (isfield(sPacking, 'z'))
+            scalDim = 3;
+            matPositions = [sPacking.x.' sPacking.y.' sPacking.z.'];
+            vecBoxDims   = [sPacking.Lx ; sPacking.Ly ; sPacking.Lz];
         else
-            dim = 2;
-            positions = [packing.x.' packing.y.'];
-            boxDims   = [packing.Lx ; packing.Ly];
+            scalDim = 2;
+            matPositions = [sPacking.x.' sPacking.y.'];
+            vecBoxDims   = [sPacking.Lx ; sPacking.Ly];
         end
-        radii = packing.Dn.'/2.0;
+        vecRadii = sPacking.Dn.'/2.0;
     else                               % New packing format
-        if (isfield(packing, 'vecPosZ'))
-            dim = 3;
-            positions = [packing.vecPosX packing.vecPosY packing.vecPosZ];
-            boxDims   = [packing.scalBoxWidthX ; packing.scalBoxHeightY ; packing.scalBoxDepthZ];
+        if (isfield(sPacking, 'vecPosZ'))
+            scalDim = 3;
+            matPositions = [sPacking.vecPosX sPacking.vecPosY sPacking.vecPosZ];
+            vecBoxDims   = [sPacking.scalBoxWidthX ; sPacking.scalBoxHeightY ; sPacking.scalBoxDepthZ];
         else
-            dim = 2;
-            positions = [packing.vecPosX packing.vecPosY];
-            boxDims   = [packing.scalBoxWidthX ; packing.scalBoxHeightY];
+            scalDim = 2;
+            matPositions = [sPacking.vecPosX sPacking.vecPosY];
+            vecBoxDims   = [sPacking.scalBoxWidthX ; sPacking.scalBoxHeightY];
         end
-        radii = packing.vecDiameter/2.0;
+        vecRadii = sPacking.vecDiameter/2.0;
     end
 
-    N = size(positions, 1);
-    dof = N*dim;
+    scalNumParticles = size(matPositions, 1);
+    scalNumDof = scalNumParticles*scalDim;
 end
-
