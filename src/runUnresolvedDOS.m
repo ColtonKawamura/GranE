@@ -40,6 +40,9 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
 %       only if tan(beta) <= mu, beta = (pi - theta)/2, theta the angle between
 %       its two contact normals).
 %
+%   The stiffnesses are the packing's own (fricState.K, fricState.Kt), as in
+%   runFrictionalDOS.
+%
 %   Frequencies are omega_hat = omega/sqrt(<k_n>/m) with the <k_n> of the
 %   network they come from (as in plotFrictionalDOS).
 %
@@ -140,7 +143,7 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
 
         % 3) the modes of the original Frictional matrix, localized or not
         cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
-            "contactLaw", strContactLaw, "tangentialSpringConstant", sFric.K/3, "mobilizationTol", options.scalMobTol};
+            "contactLaw", strContactLaw, "tangentialSpringConstant", sFric.Kt, "mobilizationTol", options.scalMobTol};
         if options.boolModes
             [matK, ~, matMass] = matSpringDampMass(sPack, 0, sFric.K, 1, cellCommon{:}, "fricState", sFric);
             [s.vecModeOmegaHat, s.vecModeShareRemoved, s.vecModePR] = modeLocalization(matK, matMass, ~vecBoolKeep, s.scalMeanKn);

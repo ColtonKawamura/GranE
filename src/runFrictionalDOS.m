@@ -58,6 +58,9 @@ function runFrictionalDOS(strContactLaw, options)
 %       scalN          particles per packing (default 500)
 %       scalK          pack.m spring constant K (default 100)
 %       scalKtOverK    tangential/normal stiffness ratio (default 1/3)
+%                      scalK and scalKtOverK only set how NEW packings are
+%                      made; every spectrum is solved with the K and K_t the
+%                      packing stored (fricState.K, fricState.Kt).
 %       scalMobTol     m >= 1 - scalMobTol is fully mobilized (default 1e-6)
 %       scalSeedRetries replacement seeds tried when a packing does not
 %                      converge (seed + 1000*k, k = 1..scalSeedRetries; default 2)
@@ -240,14 +243,22 @@ end
 function [sSpectra, sInfo] = fourSpectra(sPacking, sFric, strContactLaw, options)
 % Frictional (stick), Partial Slip (slip), Total Slip (allSlip) and
 % post-pack frictionless spectra of one backbone (pre-stress on, Γ = 0).
+% The stiffnesses are the ones the packing was made with (fricState.K and
+% fricState.Kt), not this call's scalK/scalKtOverK: a data set filled in
+% later, or one made with other options, is still solved with its own
+% springs, and runUnresolvedDOS reads the same two fields.
+    if ~isfield(sFric, 'Kt')
+        error('runFrictionalDOS:NoKt', 'fricState has no Kt field; this packing predates pack.m storing K_t.');
+    end
+    scalK = sFric.K;
     cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
         "fricState", sFric, "contactLaw", strContactLaw, ...
-        "tangentialSpringConstant", options.scalKtOverK*options.scalK, "mobilizationTol", options.scalMobTol};
-    [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:});
-    matKSlip    = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:}, "slipMobilized", true);
-    matKAllSlip = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
+        "tangentialSpringConstant", sFric.Kt, "mobilizationTol", options.scalMobTol};
+    [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{:});
+    matKSlip    = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{:}, "slipMobilized", true);
+    matKAllSlip = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
         "fricState", sFric, "slipMobilized", true, "mobilizationTol", 1);
-    [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, options.scalK, 1, ...
+    [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, scalK, 1, ...
         "periodic", true, "uniformMass", true, "stressed", true, "contactLaw", strContactLaw);
     sSpectra = struct();
     sSpectra.sStick = calcEigenFrequencies(matKStick, matMass);
