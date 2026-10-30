@@ -44,6 +44,9 @@ function runFrictionalDOS(strContactLaw, options)
 %       scalN          particles per packing (default 500)
 %       scalK          pack.m spring constant K (default 100)
 %       scalKtOverK    tangential/normal stiffness ratio (default 1/3)
+%                      scalK and scalKtOverK set how NEW packings are made;
+%                      the spectra always use the K and K_t the packing
+%                      stored (fricState.K, fricState.Kt).
 %       scalMobTol     m >= 1 - scalMobTol is fully mobilized (default 1e-6)
 %       scalSeedRetries replacement seeds tried when a packing does not
 %                      converge (seed + 1000*k, k = 1..scalSeedRetries; default 2)
@@ -152,15 +155,22 @@ function runFrictionalDOS(strContactLaw, options)
         % 2) backbone, its re-indexed contact forces and the statistics
         [sPacking, sFricBackbone, sStats] = frictionalBackbone(sPackingFile, scalMu, options.scalMobTol);
 
-        % 3) the four stiffness matrices (pre-stress on, Γ = 0)
+        % 3) the four stiffness matrices (pre-stress on, Γ = 0), with the
+        % springs the packing was made with (fricState.K, fricState.Kt). The
+        % packing may be a reused file from an earlier call with other
+        % scalK/scalKtOverK; pack.m does not repack an existing file.
+        if ~isfield(sFricBackbone, 'Kt')
+            error('runFrictionalDOS:NoKt', 'fricState in %s has no Kt field.', strPackingFile);
+        end
+        scalK = sFricBackbone.K;
         cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
             "fricState", sFricBackbone, "contactLaw", strContactLaw, ...
-            "tangentialSpringConstant", options.scalKtOverK*options.scalK, "mobilizationTol", options.scalMobTol};
-        [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:});
-        matKSlip    = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{:}, "slipMobilized", true);
-        matKAllSlip = matSpringDampMass(sPacking, 0, options.scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
+            "tangentialSpringConstant", sFricBackbone.Kt, "mobilizationTol", options.scalMobTol};
+        [matKStick, ~, matMass, sInfo] = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{:});
+        matKSlip    = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{:}, "slipMobilized", true);
+        matKAllSlip = matSpringDampMass(sPacking, 0, scalK, 1, cellCommon{1:8}, "contactLaw", strContactLaw, ...
             "fricState", sFricBackbone, "slipMobilized", true, "mobilizationTol", 1);
-        [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, options.scalK, 1, ...
+        [matKFrictionless, ~, matMassFrictionless] = matSpringDampMass(sPacking, 0, scalK, 1, ...
             "periodic", true, "uniformMass", true, "stressed", true, "contactLaw", strContactLaw);
         assert(sInfo.numContacts == sStats.scalNc && sInfo.numMobilized == sStats.scalNmContacts && sInfo.numNotInFricState == 0, ...
             'runFrictionalDOS:ContactMismatch', 'matSpringDampMass found a different contact network than fricState.');

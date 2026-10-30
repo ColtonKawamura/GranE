@@ -26,6 +26,8 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
 %                   flagged boolCollapsed and get no spectrum.
 %   <f> is the mean |f_n| over all contacts of the full pre-cleanRats state,
 %   the normalization of cleanRats and plotUncertContacts.
+%   The springs are the packing's own, fricState.K and fricState.Kt, as in
+%   runFrictionalDOS.
 %
 %   Also stored, for plotUnresolvedDOS:
 %     - the modes of the ORIGINAL Frictional dynamical matrix: their
@@ -146,7 +148,7 @@ function sResults = runUnresolvedDOS(strContactLaw, options)
 
         % 3) the modes of the original Frictional matrix, localized or not
         cellCommon = {"periodic", true, "uniformMass", true, "friction", true, "stressed", true, ...
-            "contactLaw", strContactLaw, "tangentialSpringConstant", sFric.K/3, "mobilizationTol", options.scalMobTol};
+            "contactLaw", strContactLaw, "tangentialSpringConstant", sFric.Kt, "mobilizationTol", options.scalMobTol};
         if options.boolModes
             [matK, ~, matMass] = matSpringDampMass(sPack, 0, sFric.K, 1, cellCommon{:}, "fricState", sFric);
             [s.vecModeOmegaHat, s.vecModeShareRemoved, s.vecModePR] = modeLocalization(matK, matMass, ~vecBoolKeep, s.scalMeanKn);
